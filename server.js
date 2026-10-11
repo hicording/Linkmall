@@ -405,8 +405,18 @@ const LINKBTN = `
 // 화면 전체 색을 뒤집고(검은 배경·밝은 글자), 사진·동영상만 다시 뒤집어 원래 색으로 보여줘요.
 // 처음엔 기기 설정을 따르고, 🌙/☀️ 버튼으로 바꾸면 그 선택을 기억해요.
 const EMPTY_CSS = `
-button[style*="#6b7280"]{width:auto!important;padding:7px 12px!important;font-size:12px!important;border-radius:10px!important}
+#ptest,button[style*="#6b7280"]{width:auto!important;padding:7px 12px!important;font-size:12px!important;border-radius:10px!important}
 .empty{display:block;font-style:normal;text-align:center;background:#f7f7f8;border:1px solid #eee;border-radius:14px;padding:14px;color:#71717a;font-size:13px;font-weight:400;margin:6px 0}
+`;
+const THEME_CSS = `
+button,.btn,.bb{background:#0f8f74}
+.btn,.bb{box-shadow:0 6px 14px rgba(15,143,116,.22)}
+button:active,.btn:active,.bb:active{background:#0b7a63}
+.nv.on{background:#0f8f74;box-shadow:0 10px 22px rgba(15,143,116,.28)}
+.w a:not([class]),.w a.sub,.w a.sm,.main a:not([class]),.main a.sub,.main a.sm{background:#e7f5f1;color:#0b6b57}
+.w a:not([class]):active,.w a.sub:active,.w a.sm:active,.main a:not([class]):active,.main a.sub:active,.main a.sm:active{background:#d3ebe4}
+#ptest,button[style*="#6b7280"]{background:#e7f5f1!important;color:#0b6b57!important;box-shadow:none}
+input:focus,textarea:focus,select:focus{outline-color:#0f8f74;border-color:#0f8f74}
 `;
 const DARK_CSS = `
 html.dark{filter:invert(1) hue-rotate(180deg);background:#fff}
@@ -453,7 +463,7 @@ button,.btn{display:inline-block;background:#18181b;color:#fff;border:0;border-r
 .secret{white-space:pre-wrap;word-break:break-all;background:#ecfdf5;border-radius:16px;padding:14px}code{background:#f4f4f5;padding:2px 6px;border-radius:8px;word-break:break-all}
 a{color:#18181b}.btn,.logo,.chip{text-decoration:none}.warn{background:#fff7ed;color:#9a3412;border-radius:16px;padding:13px 16px;font-size:13px}
 ${LINKBTN}
-${DARK_CSS}${EMPTY_CSS}
+${DARK_CSS}${EMPTY_CSS}${THEME_CSS}
 `;
 const page = (title, body) => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/png" href="/favicon.ico?v=${ICON_VER}"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ICON_VER}"><link rel="manifest" href="/manifest.json?v=${ICON_VER}"><meta name="theme-color" content="#111111">${DARK_HEAD}<meta name="mobile-web-app-capable" content="yes"><title>${esc(title)}</title><style>${css}</style></head><body>${SPLASH}<div class="top"><a class="logo" href="/">링크몰</a>${DARK_BTN}<a class="chip" href="/my" aria-label="내 상점">${STORE_ICO}</a></div><div class="w">${body}</div><script>if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))</script></body></html>`;
 
@@ -504,7 +514,7 @@ body.open .ov{opacity:1;pointer-events:auto}body.open .dr{transform:none}
 input,textarea,select{font-family:inherit}
 .secret{white-space:pre-wrap;word-break:break-all;background:#ecfdf5;border-radius:16px;padding:14px}
 ${LINKBTN}
-${DARK_CSS}${EMPTY_CSS}
+${DARK_CSS}${EMPTY_CSS}${THEME_CSS}
 `;
 const ICO = {
   bag: '<svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M8.5 10.5a3.5 3.5 0 0 0 7 0"/><path d="M4 7h16"/></svg>',
