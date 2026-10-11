@@ -417,6 +417,20 @@ button:active,.btn:active,.bb:active{background:#0b7a63}
 .w a:not([class]):active,.w a.sub:active,.w a.sm:active,.main a:not([class]):active,.main a.sub:active,.main a.sm:active{background:#d3ebe4}
 #ptest,button[style*="#6b7280"]{background:#e7f5f1!important;color:#0b6b57!important;box-shadow:none}
 input:focus,textarea:focus,select:focus{outline-color:#0f8f74;border-color:#0f8f74}
+/* 크기·간격 정리 */
+.w{padding:14px 16px 60px}.main{padding:14px 16px 60px}
+h1{font-size:22px;margin:8px 0 4px}h2{font-size:17px;margin:22px 0 8px}
+.card{padding:14px 16px;margin:10px 0;border-radius:18px}
+input,textarea,select{padding:11px 14px;border-radius:14px;font-size:15px;margin:4px 0 8px}
+textarea{min-height:76px}
+button,.btn{padding:12px 14px;font-size:15px;border-radius:14px}
+.bb{padding:15px;font-size:16px;border-radius:16px}
+.acts{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-top:8px}
+.acts form{margin:0;flex:none!important}
+.acts button,form:not(#bf):not([action*="/buy"]):not([action*="pay"]):not(:has(input:not([type=hidden]),textarea,select)) button{width:auto!important;padding:7px 12px!important;font-size:12px!important;border-radius:10px!important}
+.acts button[type=button]{background:#e7f5f1!important;color:#0b6b57!important;box-shadow:none}
+form[action*="delete"] button{background:#dc2626}
+.th form[action*="delete"] button{background:#f4f4f5!important;color:#dc2626}
 `;
 const DARK_CSS = `
 html.dark{filter:invert(1) hue-rotate(180deg);background:#fff}
