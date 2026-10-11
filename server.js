@@ -1032,6 +1032,11 @@ const notifyReplied = (q, reply, from) => pushToUser(q.user_id, { title: `${from
 const newLicenseKey = () => { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let t = ''; for (const x of crypto.randomBytes(16)) t += A[x % 32]; return `LK-${t.slice(0, 4)}-${t.slice(4, 8)}-${t.slice(8, 12)}-${t.slice(12, 16)}`; };
 const NO_LICENSE_MSG = '이 상점은 판매 이용권이 없어서 지금은 이용할 수 없어요';
 const licenseOk = async (shop) => { if (!shop || !shop.owner) return true; const o = await store.userById(shop.owner); if (!o) return false; return isAdmin(o) || Number(o.license_until) > Date.now(); };
+// ---------- 포인트 충전 확인 방식 (수동 / 자동) ----------
+// 자동 = 은행 입금 문자를 /sms/<토큰> 으로 전달받아 입금자명·금액이 맞으면 포인트를 바로 지급. 판매 이용권(라이센스 키)이 있는 상점만 쓸 수 있음
+const PAYMODE_SQL = 'alter table shops add column if not exists pay_mode text; alter table shops add column if not exists sms_token text;';
+const autoAllowed = async (shop) => { if (!shop || !shop.owner) return false; const o = await store.userById(shop.owner); return !!o && (isAdmin(o) || Number(o.license_until) > Date.now()); };
+const smsSeen = new Map(); // 같은 문자가 재전송돼 두 번 처리되는 것 방지 (2분)
 const licTries = new Map(); // 키 무작위 대입 방지: 회원별 10분에 10번까지
 const parseBlocked = (shop) => { try { const a = JSON.parse((shop && shop.blocked) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; } catch { return []; } };
 const isBlocked = (shop, uid) => !!uid && parseBlocked(shop).includes(uid);
@@ -1573,6 +1578,29 @@ route('GET', /^\/m\/([\w-]+)$/, async (req, res, m) => {
   const ownerU = shop.owner ? await store.userById(shop.owner) : null;
   const licLeftM = ownerU ? Number(ownerU.license_until || 0) - Date.now() : 0;
   const licBanner = !shop.owner || (ownerU && isAdmin(ownerU)) ? '' : licLeftM <= 0 ? '<p class="warn">판매 이용권이 없어서 구매·충전이 막혀 있어요. <a href="/my">내 상점에서 키 등록하기</a></p>' : licLeftM < 3 * 86400000 ? `<p class="warn">판매 이용권이 ${Math.ceil(licLeftM / 86400000)}일 뒤 끝나요. <a href="/my">키 등록하기</a></p>` : '';
+  const autoOk = !!(ownerU && (isAdmin(ownerU) || licLeftM > 0)); // 자동 충전은 이용권이 있는 상점만
+  const autoOn = shop.pay_mode === 'auto' && autoOk;
+  const smsUrl = shop.sms_token ? BASE + '/sms/' + shop.sms_token : '';
+  const payModeBlock = `<h2>충전 확인 방식</h2>
+<form class="card" method="post" action="/m/${shop.key}/paymode">
+<label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 12px"><input type="radio" name="mode" value="manual"${autoOn ? '' : ' checked'} style="width:auto;margin:4px 0 0"><span><b>수동</b><br><span class="sub">입금을 직접 확인하고 아래 [입금 확인] 버튼을 눌러 포인트를 줘요</span></span></label>
+<label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 12px${autoOk ? '' : ';opacity:.5'}"><input type="radio" name="mode" value="auto"${autoOn ? ' checked' : ''}${autoOk ? '' : ' disabled'} style="width:auto;margin:4px 0 0"><span><b>자동</b><br><span class="sub">입금 문자가 오면 입금자명·금액을 맞춰 보고 포인트를 바로 줘요</span></span></label>
+${autoOk ? '' : '<p class="warn">자동 충전은 판매 이용권(라이센스 키)을 등록한 상점만 쓸 수 있어요. <a href="/my">내 상점에서 키 등록하기</a></p>'}
+${shop.pay_mode === 'auto' && !autoOk ? '<p class="warn">이용권이 끝나서 자동 확인이 멈춰 있어요. 키를 다시 등록하기 전까지는 직접 승인해 주세요.</p>' : ''}
+<button>저장</button></form>
+${autoOn ? `<div class="card"><b>자동 충전 설정 방법</b>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px">
+<li>위 <b>충전 받을 계좌</b>에 은행·계좌번호·예금주를 저장해 두세요.</li>
+<li>입금 알림 문자를 받는 <b>안드로이드 폰</b>에 문자 전달 앱(SmsForwarder, MacroDroid 등)을 설치하고 문자 읽기 권한을 허용해요.</li>
+<li>앱에서 <b>웹훅(HTTP 요청)으로 전달</b> 규칙을 만들어요. 방식은 <b>POST</b>, 주소는 아래 주소, 보낼 내용은 <b>문자 내용 전체</b>예요. (JSON이어도 돼요)</li>
+<li>조건은 <b>문자에 "입금"이 들어 있을 때</b>, 보낸 사람은 내 은행 번호로 좁혀 두세요.</li>
+<li>테스트: 1,000원 충전을 신청하고 신청한 입금자명 그대로 입금해 보세요. 문자가 도착하면 몇 초 안에 포인트가 들어가요.</li>
+</ol>
+<p class="sub" style="margin:10px 0 4px">내 문자 수신 주소 (남에게 알려주지 마세요)</p>
+<code style="font-size:13px;word-break:break-all;user-select:all;display:block;background:#f4f4f5;border-radius:12px;padding:10px 12px">${esc(smsUrl)}</code>
+<button type="button" data-u="${esc(smsUrl)}" onclick="navigator.clipboard.writeText(this.dataset.u);this.textContent='복사됨'" style="margin-top:8px">주소 복사</button>
+<p class="sub" style="margin:10px 0 0">· 입금자명과 금액이 신청한 것과 모두 같아야 자동으로 처리돼요.<br>· 같은 이름·같은 금액 신청이 여러 건이면 헷갈리지 않게 자동 처리를 건너뛰어요. 아래 충전 대기에서 직접 승인해 주세요.<br>· 자동 처리가 안 된 건은 언제든 [입금 확인] 버튼으로 줄 수 있어요.<br>· 아이폰은 문자를 앱으로 자동 전달하기 어려워요. 단축어 자동화로 되는 경우도 있지만 안 되면 수동을 쓰세요.<br>· 주소가 새어 나갔다면 아래에서 다시 만들고 앱의 주소도 바꿔 주세요.</p>
+<form method="post" action="/m/${shop.key}/paymode" onsubmit="return confirm('주소를 다시 만들면 지금 쓰는 주소는 못 써요. 계속할까요?')"><input type="hidden" name="act" value="regen"><button style="background:#6b7280">주소 다시 만들기</button></form></div>` : ''}`;
   const titleOfItem = new Map(items.map((i) => [i.id, i.title]));
   const recent = [...orders].sort((a, b) => Number(b.paidAt || 0) - Number(a.paidAt || 0)).slice(0, 20);
   const hooks = parseHooks(shop.webhook);
@@ -1634,6 +1662,7 @@ ${blockedIds.length ? `<div class="chips" style="margin-bottom:12px">${blockedId
 <div class="row"><input name="bank" placeholder="은행" value="${esc(shop.bank)}" maxlength="20"><input name="holder" placeholder="예금주" value="${esc(shop.holder)}" maxlength="20"></div>
 <input name="account" placeholder="계좌번호" value="${esc(shop.account)}" maxlength="40" inputmode="numeric" style="margin-top:8px">
 <button>저장</button><p class="sub">충전할 때 보이는 계좌예요. 은행·계좌번호·예금주를 모두 적어야 열리고, 비우면 꺼져요.</p></form>
+${payModeBlock}
 <h2>충전 대기 ${charges.length}건</h2>
 ${charges.map((c) => `<div class="card"><b>${esc(c.name)}</b> <span class="price">${won(c.amount)}</span><br><span class="sub">회원 ${esc(c.user_id.slice(0, 8))} · ${fmtDate(c.created)}${Date.now() > c.created + CHARGE_TTL ? ' · 기한 지남' : ''}</span>
 ${c.image ? `<p style="margin:8px 0"><a href="/m/${shop.key}/charges/${c.token}/img" target="_blank">입금 사진 보기</a></p>` : ''}
@@ -1800,6 +1829,35 @@ route('POST', /^\/m\/([\w-]+)\/blocks\/remove$/, async (req, res, m) => {
   redirect(res, `/m/${shop.key}`);
 });
 
+// 충전 확인 방식 저장 (수동/자동) · 문자 수신 주소 재발급. 자동은 이용권이 있는 상점만
+route('POST', /^\/m\/([\w-]+)\/paymode$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1]);
+  if (!shop) return;
+  const f = await readForm(req);
+  const back = `<p><a href="/m/${shop.key}">← 상점 관리로</a></p>`;
+  const deny = (t) => send(res, 403, page('설정할 수 없어요', `<h1>${t}</h1>${back}`));
+  const act = str(f.act, 10);
+  if (act === 'regen') {
+    if (!(await autoAllowed(shop))) return deny('자동 충전은 판매 이용권(라이센스 키)이 있어야 써요');
+    try { await store.updateShop(shop.id, { sms_token: rid(20) }); }
+    catch (e) { console.error('문자 주소 저장 실패', e.message); return send(res, 500, page('저장 실패', `<h1>저장하지 못했어요</h1><p class="warn">데이터베이스에 칸이 아직 없는 것 같아요. Supabase SQL Editor에서 <code>${PAYMODE_SQL}</code> 를 한 번 실행한 뒤 다시 해 주세요.</p>${back}`)); }
+    return redirect(res, `/m/${shop.key}`);
+  }
+  const mode = f.mode === 'auto' ? 'auto' : 'manual';
+  const upd = { pay_mode: mode };
+  if (mode === 'auto') {
+    if (!(await autoAllowed(shop))) return deny('자동 충전은 판매 이용권(라이센스 키)을 등록해야 쓸 수 있어요. 내 상점에서 키를 먼저 등록해 주세요.');
+    if (!(shop.bank && shop.account && shop.holder)) return deny('먼저 충전 받을 계좌(은행·계좌번호·예금주)를 저장해 주세요');
+    if (!shop.sms_token) upd.sms_token = rid(20);
+  }
+  try { await store.updateShop(shop.id, upd); }
+  catch (e) {
+    console.error('충전 방식 저장 실패', e.message);
+    return send(res, 500, page('저장 실패', `<h1>저장하지 못했어요</h1><p class="warn">데이터베이스에 칸이 아직 없는 것 같아요. Supabase SQL Editor에서 <code>${PAYMODE_SQL}</code> 를 한 번 실행한 뒤 다시 저장해 주세요.</p>${back}`));
+  }
+  redirect(res, `/m/${shop.key}`);
+});
+
 route('POST', /^\/m\/([\w-]+)\/pay$/, async (req, res, m) => {
   const shop = await manageShop(req, res, m[1]);
   if (!shop) return;
@@ -1840,20 +1898,32 @@ route('POST', /^\/i\/([\w-]+)\/deposit$/, async (req, res, m) => {
   redirect(res, `/o/${dep.token}`);
 });
 
-// 입금 문자 수신 (자동 확인). 문자 내용에 '입금', 대기 주문의 입금자명, 금액이 모두 있으면 확인
+// 입금 문자 수신 (자동 확인). 문자 내용에 '입금', 대기 중인 주문/충전의 입금자명, 금액이 모두 있으면 확인
 route('POST', /^\/sms\/([\w-]+)$/, async (req, res, m) => {
   const shop = await store.shopBySms(m[1]);
-  if (!shop || shop.pay_mode !== 'auto') { res.writeHead(404); return res.end('no'); }
+  if (!shop || shop.pay_mode !== 'auto' || !(await autoAllowed(shop))) { res.writeHead(404); return res.end('no'); } // 이용권이 끝나면 자동 확인도 멈춤
   let text = await readBody(req);
   try { const j = JSON.parse(text); if (j && typeof j === 'object') text = Object.values(j).join(' '); } catch {}
   let result = 'ignored';
   if (/입금/.test(text)) {
+    const now = Date.now();
+    for (const [k, t] of smsSeen) if (now - t > 120000) smsSeen.delete(k);
+    const dk = shop.id + ':' + crypto.createHash('sha1').update(text).digest('hex');
+    if (smsSeen.has(dk)) { res.writeHead(200); return res.end('duplicate'); }
     const flat = text.replace(/\s/g, '');
     const plain = text.replace(/,/g, '');
-    const waiting = (await store.waitingDeposits(shop.id)).filter((d) => Date.now() <= d.created + DEP_TTL);
-    const hit = waiting.filter((d) => flat.includes(d.name.replace(/\s/g, '')) && new RegExp('(^|\\D)' + d.amount + '(\\D|$)').test(plain));
-    if (hit.length === 1) { await confirmDeposit(hit[0]); result = 'ok'; }
-    else if (hit.length > 1) { result = 'ambiguous'; }
+    const same = (x) => flat.includes(String(x.name).replace(/\s/g, '')) && new RegExp('(^|\\D)' + Number(x.amount) + '(\\D|$)').test(plain);
+    const hitD = (await store.waitingDeposits(shop.id)).filter((d) => now <= d.created + DEP_TTL && same(d));
+    const hitC = (await store.shopCharges(shop.id)).filter((c) => now <= c.created + CHARGE_TTL && same(c));
+    if (hitD.length + hitC.length === 1) {
+      if (hitD.length) { await confirmDeposit(hitD[0]); result = 'ok'; }
+      else if (await confirmCharge(hitC[0])) {
+        result = 'ok';
+        await notify(shop, `💰 충전 자동 확인: ${hitC[0].name} · ${won(hitC[0].amount)} 포인트를 지급했어요`, 'charge');
+      } else result = 'failed';
+      if (result === 'ok') smsSeen.set(dk, now);
+    }
+    else if (hitD.length + hitC.length > 1) { result = 'ambiguous'; } // 같은 이름·금액이 여러 건이면 자동 처리 안 함 → 관리 페이지에서 직접 승인
     else result = 'nomatch';
   }
   res.writeHead(200); res.end(result);
@@ -1977,6 +2047,7 @@ route('GET', /^\/w\/([\w-]+)$/, async (req, res, m) => {
   const q = new URL(req.url, BASE).searchParams;
   const blockedMe = isBlocked(shop, u.id);
   const licOkW = await licenseOk(shop);
+  const autoW = shop.pay_mode === 'auto' && await autoAllowed(shop);
   const canCharge = !blockedMe && licOkW && !!(shop.bank && shop.account && shop.holder);
   const bal = await store.shopPoints(u.id, shop.id);
   const pending = (await store.userShopCharges(u.id, shop.id)).filter((c) => Date.now() <= c.created + CHARGE_TTL);
@@ -1991,8 +2062,8 @@ ${canCharge ? `<form class="card" method="post" action="/w/${shop.id}/charge">
 <input name="name" placeholder="입금자명 (은행 앱에 찍히는 내 이름)" required minlength="2" maxlength="20">
 <input type="hidden" name="image" id="cim"><div class="row" style="margin:0 0 10px"><label for="cif" style="display:inline-block;background:#f4f4f5;border-radius:12px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer">입금 사진 (선택)</label><span id="cin" class="sub"></span></div><input type="file" id="cif" accept="image/*" style="display:none"><img id="cip" alt="" style="display:none;width:100%;max-height:200px;object-fit:contain;border-radius:12px;margin:0 0 10px">
 <script>(function(){var f=document.getElementById('cif'),v=document.getElementById('cim'),p=document.getElementById('cip'),n=document.getElementById('cin');f.onchange=function(){var file=f.files[0];if(!file)return;var r=new FileReader();r.onload=function(){var im=new Image();im.onload=function(){var s=Math.min(1,900/Math.max(im.width,im.height));var c=document.createElement('canvas');c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);var d=c.toDataURL('image/jpeg',0.7);v.value=d;p.src=d;p.style.display='block';n.textContent='사진 첨부됨'};im.onerror=function(){alert('이 사진은 읽을 수 없어요');f.value='';v.value=''};im.src=r.result};r.readAsDataURL(file)}})();</script>
-<button>충전 신청</button><p class="sub">신청 후 아래 계좌로 입금하면, 상점 운영자가 입금을 확인한 뒤 포인트가 들어와요. 충전한 포인트는 환불되지 않아요.</p></form>` : (blockedMe ? `<p class="warn">${BLOCKED_MSG}</p>` : !licOkW ? '<p class="warn">지금은 판매가 중단된 상점이라 충전할 수 없어요</p>' : '<p class="warn">이 상점은 아직 충전을 받지 않아요</p>')}
-${pending.map((c) => `<div class="card"><b>입금해 주세요</b><br>${esc(shop.bank)} <b>${esc(shop.account)}</b> (예금주 ${esc(shop.holder)})<br><span class="price">${won(c.amount)}</span><br><span class="sub">입금자명 <b>${esc(c.name)}</b> 그대로 · 기한 ${fmtDate(c.created + CHARGE_TTL)}<br>운영자가 확인하면 포인트가 들어와요 (20초마다 자동 확인)</span>
+<button>충전 신청</button><p class="sub">${autoW ? '신청 후 아래 계좌로 입금하면 입금 문자가 확인되는 대로 포인트가 자동으로 들어와요. 입금자명과 금액이 신청한 것과 똑같아야 해요.' : '신청 후 아래 계좌로 입금하면, 상점 운영자가 입금을 확인한 뒤 포인트가 들어와요.'} 충전한 포인트는 환불되지 않아요.</p></form>` : (blockedMe ? `<p class="warn">${BLOCKED_MSG}</p>` : !licOkW ? '<p class="warn">지금은 판매가 중단된 상점이라 충전할 수 없어요</p>' : '<p class="warn">이 상점은 아직 충전을 받지 않아요</p>')}
+${pending.map((c) => `<div class="card"><b>입금해 주세요</b><br>${esc(shop.bank)} <b>${esc(shop.account)}</b> (예금주 ${esc(shop.holder)})<br><span class="price">${won(c.amount)}</span><br><span class="sub">입금자명 <b>${esc(c.name)}</b> 그대로 · 기한 ${fmtDate(c.created + CHARGE_TTL)}<br>${autoW ? '입금 문자가 확인되면 포인트가 들어와요' : '운영자가 확인하면 포인트가 들어와요'} (20초마다 자동 확인)</span>
 <form method="post" action="/w/${shop.id}/charge/${c.token}/cancel"><button style="background:#6b7280">신청 취소</button></form></div>`).join('')}
 ${pending.length ? '<script>setTimeout(function(){location.reload()},20000)</script>' : ''}
 <h2>내역</h2>
@@ -2018,7 +2089,7 @@ route('POST', /^\/w\/([\w-]+)\/charge$/, async (req, res, m) => {
   const chg = { token: rid(12), user_id: u.id, shop: shop.id, amount, name, status: 'waiting', created: Date.now() };
   const chImg = cleanImage(f.image); if (chImg) chg.image = chImg;
   await store.createCharge(chg);
-  await notify(shop, `⏳ 충전 신청: ${name} · ${won(amount)} — 입금을 확인하고 관리 페이지에서 승인해 주세요`, 'charge', { name, price: won(amount), shop: shop.name });
+  await notify(shop, `⏳ 충전 신청: ${name} · ${won(amount)} — ${shop.pay_mode === 'auto' && (await autoAllowed(shop)) ? '입금 문자가 오면 자동으로 지급돼요' : '입금을 확인하고 관리 페이지에서 승인해 주세요'}`, 'charge', { name, price: won(amount), shop: shop.name });
   back('m', '충전 신청이 접수됐어요. 아래 계좌로 입금해 주세요');
 });
 
