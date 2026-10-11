@@ -405,6 +405,7 @@ const LINKBTN = `
 // 화면 전체 색을 뒤집고(검은 배경·밝은 글자), 사진·동영상만 다시 뒤집어 원래 색으로 보여줘요.
 // 처음엔 기기 설정을 따르고, 🌙/☀️ 버튼으로 바꾸면 그 선택을 기억해요.
 const EMPTY_CSS = `
+button[style*="#6b7280"]{width:auto!important;padding:7px 12px!important;font-size:12px!important;border-radius:10px!important}
 .empty{display:block;font-style:normal;text-align:center;background:#f7f7f8;border:1px solid #eee;border-radius:14px;padding:14px;color:#71717a;font-size:13px;font-weight:400;margin:6px 0}
 `;
 const DARK_CSS = `
