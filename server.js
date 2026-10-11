@@ -1030,10 +1030,10 @@ async function notifyAdmins(text, url) {
 // 답변이 달리면 문의한 사람에게 푸시
 const notifyReplied = (q, reply, from) => pushToUser(q.user_id, { title: `${from} 답변이 도착했어요`, body: reply.slice(0, 100), url: q.shop ? `/s/${q.shop}/inquiry` : '/inquiry' }).catch((e) => console.error('답변 알림 실패', e.message));
 const newLicenseKey = () => { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let t = ''; for (const x of crypto.randomBytes(16)) t += A[x % 32]; return `LK-${t.slice(0, 4)}-${t.slice(4, 8)}-${t.slice(8, 12)}-${t.slice(12, 16)}`; };
-const NO_LICENSE_MSG = '이 상점은 판매 이용권이 없어서 지금은 이용할 수 없어요';
-const licenseOk = async (shop) => { if (!shop || !shop.owner) return true; const o = await store.userById(shop.owner); if (!o) return false; return isAdmin(o) || Number(o.license_until) > Date.now(); };
+const NO_LICENSE_MSG = '이용할 수 없어요'; // 지금은 쓰지 않음 (판매·충전은 무료)
+const licenseOk = async () => true; // 판매·구매·충전 신청은 모두 무료. 라이센스 키는 '자동 충전'(autoAllowed)에서만 확인해요
 // ---------- 포인트 충전 확인 방식 (수동 / 자동) ----------
-// 자동 = 은행 입금 문자를 /sms/<토큰> 으로 전달받아 입금자명·금액이 맞으면 포인트를 바로 지급. 판매 이용권(라이센스 키)이 있는 상점만 쓸 수 있음
+// 자동 = 은행 입금 알림(문자 또는 앱 푸시)을 /sms/<토큰> 으로 전달받아 입금자명·금액이 맞으면 포인트를 바로 지급. 라이센스 키가 있는 상점만 쓸 수 있음 (나머지 기능은 모두 무료)
 const PAYMODE_SQL = 'alter table shops add column if not exists pay_mode text; alter table shops add column if not exists sms_token text;';
 const autoAllowed = async (shop) => { if (!shop || !shop.owner) return false; const o = await store.userById(shop.owner); return !!o && (isAdmin(o) || Number(o.license_until) > Date.now()); };
 const smsSeen = new Map(); // 같은 문자가 재전송돼 두 번 처리되는 것 방지 (2분)
@@ -1445,7 +1445,7 @@ route('GET', /^\/my$/, async (req, res) => {
   send(res, 200, page('내 상점', `<h1>내 상점</h1><p class="sub">${esc(u.email)} · <a href="/account">비밀번호 변경</a></p>
 ${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
 ${noticeBlock(siteN, '운영자 공지')}<div class="card"><a href="/wallet">내 포인트 · 칭호</a> <a href="/inquiry">운영자 문의</a>${isAdmin(u) ? ' <a href="/admin">관리자</a>' : ''}</div>
-${isAdmin(u) ? '' : `<form class="card" method="post" action="/my/license"><b>판매 이용권</b><p class="sub">${licLeft > 0 ? `${Math.ceil(licLeft / 86400000)}일 남음 (${fmtDay(u.license_until)}까지)` : '이용권이 없어요. 운영자에게 받은 키를 등록해야 판매할 수 있어요.'}</p><div class="row"><input name="key" placeholder="LK-XXXX-XXXX-XXXX-XXXX" required maxlength="40" autocapitalize="characters" autocomplete="off"><button>등록</button></div><p class="sub">모든 상점에 적용 · 키를 또 넣으면 기간이 늘어나요</p></form>`}
+${isAdmin(u) ? '' : `<form class="card" method="post" action="/my/license"><b>자동 충전 이용권</b><p class="sub">${licLeft > 0 ? `${Math.ceil(licLeft / 86400000)}일 남음 (${fmtDay(u.license_until)}까지)` : '이용권이 없어요. 키를 등록하면 자동 충전을 쓸 수 있어요. (판매·충전 신청 등 나머지 기능은 모두 무료예요)'}</p><div class="row"><input name="key" placeholder="LK-XXXX-XXXX-XXXX-XXXX" required maxlength="40" autocapitalize="characters" autocomplete="off"><button>등록</button></div><p class="sub">모든 상점에 적용 · 키를 또 넣으면 기간이 늘어나요</p></form>`}
 ${shops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 ${atLimit ? `<div class="card"><b>상점은 ${limit}개까지 만들 수 있어요 (현재 ${shops.length}개)</b>${pendingReq ? '<p class="warn">신청이 접수됐어요. 운영자가 승인하면 상점을 만들 수 있어요.</p>' : `<form method="post" action="/my/shop-request"><textarea name="note" placeholder="상점이 더 필요한 이유" required maxlength="300"></textarea><button>상점 추가 신청</button></form>`}</div>` : `<form class="card" method="post" action="/shops"><b>새 상점 만들기</b> <span class="sub">(${shops.length}/${Number.isFinite(limit) ? limit : '제한 없음'})</span><br>
 <input name="name" placeholder="상점 이름" required maxlength="40">
@@ -1577,7 +1577,7 @@ route('GET', /^\/m\/([\w-]+)$/, async (req, res, m) => {
   const blockedIds = parseBlocked(shop);
   const ownerU = shop.owner ? await store.userById(shop.owner) : null;
   const licLeftM = ownerU ? Number(ownerU.license_until || 0) - Date.now() : 0;
-  const licBanner = !shop.owner || (ownerU && isAdmin(ownerU)) ? '' : licLeftM <= 0 ? '<p class="warn">판매 이용권이 없어서 구매·충전이 막혀 있어요. <a href="/my">내 상점에서 키 등록하기</a></p>' : licLeftM < 3 * 86400000 ? `<p class="warn">판매 이용권이 ${Math.ceil(licLeftM / 86400000)}일 뒤 끝나요. <a href="/my">키 등록하기</a></p>` : '';
+  const licBanner = ''; // 판매·충전은 무료라 이용권 경고는 없음
   const autoOk = !!(ownerU && (isAdmin(ownerU) || licLeftM > 0)); // 자동 충전은 이용권이 있는 상점만
   const autoOn = shop.pay_mode === 'auto' && autoOk;
   const smsUrl = shop.sms_token ? BASE + '/sms/' + shop.sms_token : '';
@@ -1585,21 +1585,60 @@ route('GET', /^\/m\/([\w-]+)$/, async (req, res, m) => {
 <form class="card" method="post" action="/m/${shop.key}/paymode">
 <label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 12px"><input type="radio" name="mode" value="manual"${autoOn ? '' : ' checked'} style="width:auto;margin:4px 0 0"><span><b>수동</b><br><span class="sub">입금을 직접 확인하고 아래 [입금 확인] 버튼을 눌러 포인트를 줘요</span></span></label>
 <label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 12px${autoOk ? '' : ';opacity:.5'}"><input type="radio" name="mode" value="auto"${autoOn ? ' checked' : ''}${autoOk ? '' : ' disabled'} style="width:auto;margin:4px 0 0"><span><b>자동</b><br><span class="sub">입금 문자가 오면 입금자명·금액을 맞춰 보고 포인트를 바로 줘요</span></span></label>
-${autoOk ? '' : '<p class="warn">자동 충전은 판매 이용권(라이센스 키)을 등록한 상점만 쓸 수 있어요. <a href="/my">내 상점에서 키 등록하기</a></p>'}
+${autoOk ? '' : '<p class="warn">자동 충전은 라이센스 키를 등록한 상점만 쓸 수 있어요. (나머지 기능은 모두 무료예요) <a href="/my">내 상점에서 키 등록하기</a></p>'}
 ${shop.pay_mode === 'auto' && !autoOk ? '<p class="warn">이용권이 끝나서 자동 확인이 멈춰 있어요. 키를 다시 등록하기 전까지는 직접 승인해 주세요.</p>' : ''}
 <button>저장</button></form>
 ${autoOn ? `<div class="card"><b>자동 충전 설정 방법</b>
-<ol style="padding-left:20px;line-height:1.7;font-size:14px">
-<li>위 <b>충전 받을 계좌</b>에 은행·계좌번호·예금주를 저장해 두세요.</li>
-<li>입금 알림 문자를 받는 <b>안드로이드 폰</b>에 문자 전달 앱(SmsForwarder, MacroDroid 등)을 설치하고 문자 읽기 권한을 허용해요.</li>
-<li>앱에서 <b>웹훅(HTTP 요청)으로 전달</b> 규칙을 만들어요. 방식은 <b>POST</b>, 주소는 아래 주소, 보낼 내용은 <b>문자 내용 전체</b>예요. (JSON이어도 돼요)</li>
-<li>조건은 <b>문자에 "입금"이 들어 있을 때</b>, 보낸 사람은 내 은행 번호로 좁혀 두세요.</li>
-<li>테스트: 1,000원 충전을 신청하고 신청한 입금자명 그대로 입금해 보세요. 문자가 도착하면 몇 초 안에 포인트가 들어가요.</li>
+<p class="sub" style="margin:6px 0 10px">입금 알림이 오는 <b>안드로이드 폰</b>에서 <b>Automate</b> 앱으로 설정해요. 아이폰은 어려워요 (수동을 쓰세요).</p>
+<p style="margin:12px 0 4px"><b>0. 먼저 확인</b></p>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px;margin:0">
+<li>위 <b>충전 받을 계좌</b>(은행·계좌번호·예금주)가 저장돼 있어야 해요.</li>
+<li>충전 방식이 <b>자동</b>으로 저장돼 있어야 해요.</li>
+<li>은행 앱의 <b>입금 푸시 알림</b>이 켜져 있어야 해요. (알림에 "입금 1,000원 / 홍길동 → 내 계좌"처럼 보여야 해요)</li>
 </ol>
+<p style="margin:14px 0 4px"><b>1. Automate 설치</b></p>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px;margin:0">
+<li>Play 스토어에서 <b>Automate</b> (LlamaLab)를 설치하고 열어요.</li>
+<li>오른쪽 아래 <b>+</b> → 새 플로우를 만들고 이름을 정해요 (예: 자동충전).</li>
+</ol>
+<p style="margin:14px 0 4px"><b>2. 블록 3개 만들기</b> (<b>+</b> 버튼으로 검색해서 추가)</p>
+<p class="sub" style="margin:0 0 4px"><b>① Notification posted?</b> (검색: notification posted)</p>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px;margin:0">
+<li><b>Proceed</b>를 반드시 <b>When transition</b>으로 골라요. (Immediately면 알림이 없을 때 바로 끝나 버려요)</li>
+<li><b>Package name</b>에 은행 앱을 지정해요. 카카오뱅크는 <code>com.kakaobank.channel</code>, 다른 은행은 오른쪽 목록 버튼에서 앱을 골라요.</li>
+<li>맨 아래 <b>Output variables</b>에서 <b>Title</b> 칸에 <code>title</code>, <b>Message</b> 칸에 <code>msg</code>를 적어요. 나머지 칸은 비워 둬요.</li>
+</ol>
+<p class="sub" style="margin:10px 0 4px"><b>② HTTP request</b> (검색: http request)</p>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px;margin:0">
+<li><b>Request URL</b>: 아래 <b>내 문자 수신 주소</b>를 그대로 붙여 넣어요.</li>
+<li><b>Request method</b>: POST / <b>Request content type</b>: Text</li>
+<li><b>Request content body</b>: <code>title ++ " " ++ msg</code> (칸 오른쪽 <b>fx</b>를 눌러 수식 모드로 두고 입력해요). 제목과 내용을 합쳐 보내야 "입금", 입금자명, 금액이 모두 들어가요.</li>
+<li>아래쪽 출력 변수 <b>Response content</b>(응답 내용) 칸에 <code>resp</code>를 적어요.</li>
+</ol>
+<p class="sub" style="margin:10px 0 4px"><b>③ Toast show</b> (검색: toast show, 테스트할 때 응답을 보려는 용도)</p>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px;margin:0">
+<li><b>Message</b>: <code>resp</code> (수식 모드) / <b>Duration</b>: Long</li>
+</ol>
+<p style="margin:14px 0 4px"><b>3. 블록 연결</b></p>
+<p style="font-size:14px;line-height:1.7;margin:0">Flow beginning → ① → (<b>YES</b>) ② → (<b>OK</b>) ③ → (<b>OK</b>) 다시 ①<br>① 의 <b>NO</b>는 연결하지 않아요. 블록의 동그란 버튼(GO·YES·OK)을 끌어다 다음 블록의 <b>IN</b>에 놓으면 돼요. 마지막 ③ OK를 ① IN에 연결해야 계속 반복돼요.</p>
+<p style="margin:14px 0 4px"><b>4. 권한 켜기</b></p>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px;margin:0">
+<li>플로우 화면의 <b>Privileges</b>에서 <b>access notifications and Do Not Disturb settings</b>를 눌러 Automate의 <b>알림 접근</b>을 허용해요. (이게 꺼져 있으면 알림을 못 읽어요)</li>
+<li><b>ignore battery optimizations</b>, <b>ignore app hibernation</b>도 체크해요.</li>
+<li>삼성 폰은 설정 → 배터리 → 백그라운드 사용 제한에서 Automate를 <b>절전 제외</b>로 해 주세요.</li>
+</ol>
+<p style="margin:14px 0 4px"><b>5. 시작하고 테스트</b></p>
+<ol style="padding-left:20px;line-height:1.7;font-size:14px;margin:0">
+<li>플로우 화면에서 <b>START</b>를 눌러요. 켜 두면 평소에는 아무 반응이 없고, 입금 알림이 올 때만 움직여요.</li>
+<li>상점에서 최소 금액으로 충전을 신청해요. 입금자명은 <b>은행 앱 알림에 찍히는 이름</b> 그대로 써요.</li>
+<li>그 금액을 그대로 입금하면 몇 초 안에 Toast가 뜨고 포인트가 들어가요.</li>
+</ol>
+<p style="margin:14px 0 4px"><b>Toast에 뜨는 글자 뜻</b></p>
+<p style="font-size:14px;line-height:1.7;margin:0"><code>ok</code> 성공 · <code>ignored</code> 글에 "입금"이 없음 (제목이 빠졌는지 확인) · <code>nomatch</code> 입금자명이나 금액이 신청과 다름 · <code>ambiguous</code> 같은 이름·금액 신청이 2건 이상 (하나만 남기고 취소하거나 직접 승인) · <code>duplicate</code> 같은 문자가 2분 안에 이미 처리됨 · <code>no</code> 자동 모드가 꺼져 있거나 이용권이 없거나 주소가 틀림 · 아무 글자도 안 뜸 → 패키지명, 알림 접근 권한, START 여부 확인</p>
 <p class="sub" style="margin:10px 0 4px">내 문자 수신 주소 (남에게 알려주지 마세요)</p>
 <code style="font-size:13px;word-break:break-all;user-select:all;display:block;background:#f4f4f5;border-radius:12px;padding:10px 12px">${esc(smsUrl)}</code>
 <button type="button" data-u="${esc(smsUrl)}" onclick="navigator.clipboard.writeText(this.dataset.u);this.textContent='복사됨'" style="margin-top:8px">주소 복사</button>
-<p class="sub" style="margin:10px 0 0">· 입금자명과 금액이 신청한 것과 모두 같아야 자동으로 처리돼요.<br>· 같은 이름·같은 금액 신청이 여러 건이면 헷갈리지 않게 자동 처리를 건너뛰어요. 아래 충전 대기에서 직접 승인해 주세요.<br>· 자동 처리가 안 된 건은 언제든 [입금 확인] 버튼으로 줄 수 있어요.<br>· 아이폰은 문자를 앱으로 자동 전달하기 어려워요. 단축어 자동화로 되는 경우도 있지만 안 되면 수동을 쓰세요.<br>· 주소가 새어 나갔다면 아래에서 다시 만들고 앱의 주소도 바꿔 주세요.</p>
+<p class="sub" style="margin:10px 0 0">· 입금자명과 금액이 신청한 것과 모두 같아야 자동으로 처리돼요.<br>· 같은 이름·같은 금액 신청이 여러 건이면 자동 처리를 건너뛰어요. 아래 충전 대기에서 직접 승인해 주세요.<br>· 자동 처리가 안 된 건은 언제든 [입금 확인] 버튼으로 줄 수 있어요.<br>· 무료 서버는 한동안 안 쓰면 잠들어서 첫 요청이 느릴 수 있어요. 응답이 늦으면 한 번 더 입금 알림을 보내 보세요.<br>· 은행이 알림 대신 <b>문자(SMS)</b>로 알려준다면 ① 대신 <b>SMS received</b> 블록을 쓰고, 문자 본문 변수를 ②의 Request content body에 넣으면 돼요.<br>· 주소가 새어 나갔다면 아래에서 다시 만들고 Automate의 주소도 바꿔 주세요.</p>
 <form method="post" action="/m/${shop.key}/paymode" onsubmit="return confirm('주소를 다시 만들면 지금 쓰는 주소는 못 써요. 계속할까요?')"><input type="hidden" name="act" value="regen"><button style="background:#6b7280">주소 다시 만들기</button></form></div>` : ''}`;
   const titleOfItem = new Map(items.map((i) => [i.id, i.title]));
   const recent = [...orders].sort((a, b) => Number(b.paidAt || 0) - Number(a.paidAt || 0)).slice(0, 20);
@@ -1838,7 +1877,7 @@ route('POST', /^\/m\/([\w-]+)\/paymode$/, async (req, res, m) => {
   const deny = (t) => send(res, 403, page('설정할 수 없어요', `<h1>${t}</h1>${back}`));
   const act = str(f.act, 10);
   if (act === 'regen') {
-    if (!(await autoAllowed(shop))) return deny('자동 충전은 판매 이용권(라이센스 키)이 있어야 써요');
+    if (!(await autoAllowed(shop))) return deny('자동 충전은 라이센스 키가 있어야 써요');
     try { await store.updateShop(shop.id, { sms_token: rid(20) }); }
     catch (e) { console.error('문자 주소 저장 실패', e.message); return send(res, 500, page('저장 실패', `<h1>저장하지 못했어요</h1><p class="warn">데이터베이스에 칸이 아직 없는 것 같아요. Supabase SQL Editor에서 <code>${PAYMODE_SQL}</code> 를 한 번 실행한 뒤 다시 해 주세요.</p>${back}`)); }
     return redirect(res, `/m/${shop.key}`);
@@ -1846,7 +1885,7 @@ route('POST', /^\/m\/([\w-]+)\/paymode$/, async (req, res, m) => {
   const mode = f.mode === 'auto' ? 'auto' : 'manual';
   const upd = { pay_mode: mode };
   if (mode === 'auto') {
-    if (!(await autoAllowed(shop))) return deny('자동 충전은 판매 이용권(라이센스 키)을 등록해야 쓸 수 있어요. 내 상점에서 키를 먼저 등록해 주세요.');
+    if (!(await autoAllowed(shop))) return deny('자동 충전은 라이센스 키를 등록해야 쓸 수 있어요. 내 상점에서 키를 먼저 등록해 주세요.');
     if (!(shop.bank && shop.account && shop.holder)) return deny('먼저 충전 받을 계좌(은행·계좌번호·예금주)를 저장해 주세요');
     if (!shop.sms_token) upd.sms_token = rid(20);
   }
@@ -2233,7 +2272,7 @@ ${siteInq.map((x) => inqStaffCard(x, emailOf(x.user_id), '/admin/inquiries')).jo
 ${shops.map((sh) => `<div class="card"><b>${esc(sh.name)}</b>${sh.deleted ? ' 삭제됨' : ''}<br><span class="sub">주인 ${esc(emailOf(sh.owner))}</span><br><a href="/m/${sh.key}">관리하기</a>${sh.deleted ? '' : ` <a href="/s/${sh.id}">보기</a>`}
 ${sh.deleted ? `<form method="post" action="/admin/shops/${sh.id}/restore"><button style="background:#0f766e">복구</button></form><form method="post" action="/admin/shops/${sh.id}/purge" onsubmit="return confirm('${esc(sh.name).replace(/&#39;/g, '')} 상점을 영구 삭제할까요?\\n아이템·주문·후기·충전·포인트 기록이 모두 지워지고, 구매자도 구매한 내용을 다시 볼 수 없어요. 절대 되돌릴 수 없어요.')"><button style="background:#7f1d1d;margin-top:6px">영구 삭제</button></form>` : `<form method="post" action="/admin/shops/${sh.id}/delete" onsubmit="return confirm('이 상점을 삭제할까요? 사이트에서 사라지고 새 구매·충전이 막혀요. (복구할 수 있어요)')"><button style="background:#dc2626">상점 삭제</button></form>`}</div>`).join('') || `<p class="sub">${sq ? '검색 결과가 없어요' : '상점이 없어요'}</p>`}
 <!--TAB:keys::라이센스 키-->
-<h2>라이센스 키</h2>
+<h2>라이센스 키 (자동 충전 전용)</h2>
 <form class="card" method="post" action="/admin/licenses"><div class="row"><input name="days" type="number" inputmode="numeric" min="1" max="36500" placeholder="기간 (일)" required><input name="count" type="number" inputmode="numeric" min="1" max="20" value="1" style="max-width:80px;text-align:center"></div><input name="note" placeholder="메모 (선택, 예: 홍길동)" maxlength="40" style="margin-top:8px"><button style="margin-top:8px">키 발급</button><p class="sub">기간은 일 단위, 오른쪽 칸은 발급 개수(최대 20). 영구는 36500일.</p></form>
 ${licenses.map((k) => `<div class="card tcard"><code style="font-size:14px;font-weight:700;user-select:all">${esc(k.key)}</code><br><span class="sub">${Number(k.days)}일${k.note ? ' · ' + esc(k.note) : ''} · ${k.used_by ? `사용됨 (회원번호 ${esc(String(k.used_by).slice(0, 8))} · ${fmtDay(k.used_at)})` : '미사용'}</span>${k.used_by ? '' : `<div class="acts"><button type="button" style="padding:10px;font-size:14px;border-radius:14px;background:#f4f4f5;color:#18181b" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(k.key)}');this.textContent='복사됨'">복사</button><form method="post" action="/admin/licenses/delete" onsubmit="return confirm('이 키를 삭제할까요?')"><input type="hidden" name="key" value="${esc(k.key)}"><button>삭제</button></form></div>`}</div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 <!--TAB:users::사용자-->
