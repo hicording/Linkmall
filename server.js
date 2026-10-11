@@ -398,7 +398,7 @@ const BANKS = { '02': '산업은행', '03': '기업은행', '06': '국민은행'
 
 // 글씨로 된 링크(← 돌아가기, 열어보기 같은 것)는 전부 버튼 모양으로 보이게
 const LINKBTN = `
-.w a:not([class]),.w a.sub,.w a.sm,.main a:not([class]),.main a.sub,.main a.sm{display:inline-block;background:#f4f4f5;color:#18181b;border-radius:14px;padding:10px 14px;margin:3px 0;font-size:14px;font-weight:700;text-decoration:none;word-break:break-all;line-height:1.4}
+.w a:not([class]),.w a.sub,.w a.sm,.main a:not([class]),.main a.sub,.main a.sm{display:inline-block;background:#f4f4f5;color:#18181b;border-radius:10px;padding:6px 10px;margin:3px 4px 3px 0;font-size:12px;font-weight:700;text-decoration:none;word-break:break-all;line-height:1.4;text-align:left}
 .w a:not([class]):active,.w a.sub:active,.w a.sm:active,.main a:not([class]):active,.main a.sub:active,.main a.sm:active{background:#e4e4e7}
 `;
 // ---------- 다크모드 ----------
@@ -1414,9 +1414,9 @@ route('GET', /^\/my$/, async (req, res) => {
   const siteN = await safeNotices(null);
   send(res, 200, page('내 상점', `<h1>내 상점</h1><p class="sub">${esc(u.email)} · <a href="/account">비밀번호 변경</a></p>
 ${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
-${noticeBlock(siteN, '운영자 공지')}<div class="card"><a href="/wallet">내 포인트 · 칭호</a> · <a href="/inquiry">운영자 문의</a>${isAdmin(u) ? ' · <a href="/admin">관리자</a>' : ''}</div>
+${noticeBlock(siteN, '운영자 공지')}<div class="card"><a href="/wallet">내 포인트 · 칭호</a> <a href="/inquiry">운영자 문의</a>${isAdmin(u) ? ' <a href="/admin">관리자</a>' : ''}</div>
 ${isAdmin(u) ? '' : `<form class="card" method="post" action="/my/license"><b>판매 이용권</b><p class="sub">${licLeft > 0 ? `${Math.ceil(licLeft / 86400000)}일 남음 (${fmtDay(u.license_until)}까지)` : '이용권이 없어요. 운영자에게 받은 키를 등록해야 판매할 수 있어요.'}</p><div class="row"><input name="key" placeholder="LK-XXXX-XXXX-XXXX-XXXX" required maxlength="40" autocapitalize="characters" autocomplete="off"><button>등록</button></div><p class="sub">모든 상점에 적용 · 키를 또 넣으면 기간이 늘어나요</p></form>`}
-${shops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> · <a href="/s/${x.id}">상점 보기</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
+${shops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 ${atLimit ? `<div class="card"><b>상점은 ${limit}개까지 만들 수 있어요 (현재 ${shops.length}개)</b>${pendingReq ? '<p class="warn">신청이 접수됐어요. 운영자가 승인하면 상점을 만들 수 있어요.</p>' : `<form method="post" action="/my/shop-request"><textarea name="note" placeholder="상점이 더 필요한 이유" required maxlength="300"></textarea><button>상점 추가 신청</button></form>`}</div>` : `<form class="card" method="post" action="/shops"><b>새 상점 만들기</b> <span class="sub">(${shops.length}/${Number.isFinite(limit) ? limit : '제한 없음'})</span><br>
 <input name="name" placeholder="상점 이름" required maxlength="40">
 <input name="webhook" placeholder="디스코드 웹훅 URL (선택, 판매 알림용)">
@@ -2134,7 +2134,7 @@ ${siteInq.map((x) => inqStaffCard(x, emailOf(x.user_id), '/admin/inquiries')).jo
 <!--TAB:shops::상점-->
 <h2>상점 (${shops.length})</h2>
 <form method="get" action="/admin"><input name="sq" placeholder="상점 이름 또는 주인 이메일 검색" value="${esc(sq)}"><input type="hidden" name="q" value="${esc(search)}"><button>검색</button>${sq ? '<p class="sub"><a href="/admin' + (search ? '?q=' + enc(search) : '') + '">검색 지우기</a></p>' : ''}</form>
-${shops.map((sh) => `<div class="card"><b>${esc(sh.name)}</b>${sh.deleted ? ' 삭제됨' : ''}<br><span class="sub">주인 ${esc(emailOf(sh.owner))}</span><br><a href="/m/${sh.key}">관리하기</a>${sh.deleted ? '' : ` · <a href="/s/${sh.id}">보기</a>`}
+${shops.map((sh) => `<div class="card"><b>${esc(sh.name)}</b>${sh.deleted ? ' 삭제됨' : ''}<br><span class="sub">주인 ${esc(emailOf(sh.owner))}</span><br><a href="/m/${sh.key}">관리하기</a>${sh.deleted ? '' : ` <a href="/s/${sh.id}">보기</a>`}
 ${sh.deleted ? `<form method="post" action="/admin/shops/${sh.id}/restore"><button style="background:#0f766e">복구</button></form><form method="post" action="/admin/shops/${sh.id}/purge" onsubmit="return confirm('${esc(sh.name).replace(/&#39;/g, '')} 상점을 영구 삭제할까요?\\n아이템·주문·후기·충전·포인트 기록이 모두 지워지고, 구매자도 구매한 내용을 다시 볼 수 없어요. 절대 되돌릴 수 없어요.')"><button style="background:#7f1d1d;margin-top:6px">영구 삭제</button></form>` : `<form method="post" action="/admin/shops/${sh.id}/delete" onsubmit="return confirm('이 상점을 삭제할까요? 사이트에서 사라지고 새 구매·충전이 막혀요. (복구할 수 있어요)')"><button style="background:#dc2626">상점 삭제</button></form>`}</div>`).join('') || `<p class="sub">${sq ? '검색 결과가 없어요' : '상점이 없어요'}</p>`}
 <!--TAB:keys::라이센스 키-->
 <h2>라이센스 키</h2>
