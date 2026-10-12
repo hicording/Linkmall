@@ -160,7 +160,7 @@ const sbStore = {
   async userShopPoints(uid) { return sbGet('shop_points', `user_id=eq.${enc(uid)}&select=shop,points&order=points.desc`); },
   async shopCharges(shopId) { return sbGet('charges', `shop=eq.${enc(shopId)}&status=eq.waiting&select=*&order=created.desc&limit=100`); },
   async userShopCharges(uid, shopId) { return sbGet('charges', `user_id=eq.${enc(uid)}&shop=eq.${enc(shopId)}&status=eq.waiting&select=*&order=created.desc`); },
-  async ledgerForUserShop(uid, shopId) { return sbGet('ledger', `user_id=eq.${enc(uid)}&shop=eq.${enc(shopId)}&select=*&order=created.desc&limit=30`); },
+  async ledgerForUserShop(uid, shopId, n = 30) { return sbGet('ledger', `user_id=eq.${enc(uid)}&shop=eq.${enc(shopId)}&select=*&order=created.desc&limit=${Number(n) || 30}`); },
   async createCharge(c) { await sbInsert('charges', c); },
   async reviewByToken(t) { return (await sbGet('reviews', `token=eq.${enc(t)}&select=*`))[0]; },
   async reviewById(id) { return (await sbGet('reviews', `id=eq.${enc(id)}&select=*`))[0]; },
@@ -343,7 +343,7 @@ const fileStore = {
   async userShopPoints(uid) { return Object.entries(L().shop_points).filter(([k]) => k.startsWith(uid + '|')).map(([k, v]) => ({ shop: k.split('|')[1], points: v })); },
   async shopCharges(shopId) { return Object.values(L().charges).filter((c) => c.shop === shopId && c.status === 'waiting').sort((a, b) => b.created - a.created); },
   async userShopCharges(uid, shopId) { return Object.values(L().charges).filter((c) => c.user_id === uid && c.shop === shopId && c.status === 'waiting').sort((a, b) => b.created - a.created); },
-  async ledgerForUserShop(uid, shopId) { return L().ledger.filter((l) => l.user_id === uid && l.shop === shopId).sort((a, b) => b.created - a.created).slice(0, 30); },
+  async ledgerForUserShop(uid, shopId, n = 30) { return L().ledger.filter((l) => l.user_id === uid && l.shop === shopId).sort((a, b) => b.created - a.created).slice(0, Number(n) || 30); },
   async createCharge(c) { const d = L(); d.charges[c.token] = c; save(d); },
   async reviewByToken(t) { return Object.values(L().reviews).find((r) => r.token === t); },
   async reviewById(id) { return L().reviews[id]; },
@@ -2297,8 +2297,10 @@ route('GET', /^\/w\/([\w-]+)$/, async (req, res, m) => {
   const canCharge = !blockedMe && licOkW && !!(shop.bank && shop.account && shop.holder);
   const bal = await store.shopPoints(u.id, shop.id);
   const pending = (await store.userShopCharges(u.id, shop.id)).filter((c) => Date.now() <= c.created + CHARGE_TTL);
-  const log = await store.ledgerForUserShop(u.id, shop.id);
+  const lq = (q.get('lq') || '').trim().slice(0, 30); // 내역 검색어
   const label = { charge: '충전', buy: '구매', admin: '상점 조정', payback: '페이백', reserve: '예약 (선결제)', reserve_cancel: '예약 취소 (환불)' };
+  let log = await store.ledgerForUserShop(u.id, shop.id, lq ? 1000 : 30); // 검색할 땐 더 옛날 것까지 찾아봐요
+  if (lq) { const w = lq.toLowerCase(); log = log.filter((l) => `${label[l.kind] || l.kind} ${l.note || ''} ${fmtDate(l.created)} ${Math.abs(Number(l.delta) || 0)} ${Number(l.delta) || 0}`.toLowerCase().includes(w)); }
   send(res, 200, page(shop.name + ' 포인트', `<a class="sub" href="/s/${shop.id}">← ${esc(shop.name)}</a><h1>${esc(shop.name)} 포인트</h1>
 ${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
 <div class="card"><span class="sub">보유 포인트 (1P = 1원 · 이 상점에서만 사용)</span><br><span class="price" style="font-size:28px">${pts(bal)}</span></div>
@@ -2313,7 +2315,8 @@ ${pending.map((c) => `<div class="card"><b>입금해 주세요</b><br>${esc(shop
 <form method="post" action="/w/${shop.id}/charge/${c.token}/cancel"><button style="background:#6b7280">신청 취소</button></form></div>`).join('')}
 ${pending.length ? '<script>setTimeout(function(){location.reload()},20000)</script>' : ''}
 <h2>내역</h2>
-${log.map((l) => `<div class="card"><span class="sub">${fmtDate(l.created)}</span><br>${l.kind === 'buy' ? `<a href="/o/${esc(l.ref)}">${esc(label.buy)} · ${esc(l.note)}</a>` : `${esc(label[l.kind] || l.kind)}${l.note && (l.kind === 'admin' || l.kind === 'payback') ? ' · ' + esc(l.note) : ''}`} <b>${l.delta > 0 ? '+' : ''}${Number(l.delta).toLocaleString('ko-KR')}P</b></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}`));
+<form class="row" method="get" action="/w/${shop.id}" style="margin:0 0 12px"><input name="lq" value="${esc(lq)}" placeholder="상품 이름·구매·충전·날짜로 검색" maxlength="30" aria-label="내역 검색"><button style="color:#fff">검색</button></form>${lq ? `<p class="sub">'${esc(lq)}' 검색 결과 ${log.length}건 · <a href="/w/${shop.id}">전체 보기</a></p>` : ''}
+${log.map((l) => `<div class="card"><span class="sub">${fmtDate(l.created)}</span><br>${l.kind === 'buy' ? `<a href="/o/${esc(l.ref)}">${esc(label.buy)} · ${esc(l.note)}</a>` : `${esc(label[l.kind] || l.kind)}${l.note && (l.kind === 'admin' || l.kind === 'payback') ? ' · ' + esc(l.note) : ''}`} <b>${l.delta > 0 ? '+' : ''}${Number(l.delta).toLocaleString('ko-KR')}P</b></div>`).join('') || `<p class="sub"><i class="empty">${lq ? '검색 결과가 없어요' : '비어 있어요'}</i></p>`}`));
 });
 
 route('POST', /^\/w\/([\w-]+)\/charge$/, async (req, res, m) => {
