@@ -191,6 +191,20 @@ const sbStore = {
     return (await r.json()).length > 0;
   },
   async addLedger(l) { await sbInsert('ledger', l); },
+  // 예약 (reservations 표)
+  async createResv(r) { await sbInsert('reservations', r); },
+  async resvById(id) { return (await sbGet('reservations', `id=eq.${enc(id)}&select=*`))[0]; },
+  async resvUserItem(uid, itemId) { return sbGet('reservations', `user_id=eq.${enc(uid)}&item=eq.${enc(itemId)}&status=eq.waiting&select=*&order=created.asc`); },
+  async resvByUser(uid) { return sbGet('reservations', `user_id=eq.${enc(uid)}&select=*&order=created.desc&limit=60`); },
+  async resvWaitingForItem(itemId) { return sbGet('reservations', `item=eq.${enc(itemId)}&status=eq.waiting&select=*&order=created.asc&limit=200`); },
+  async resvWaitingByShop(shopId) { return sbGet('reservations', `shop=eq.${enc(shopId)}&status=eq.waiting&select=*&limit=1000`); },
+  async resvWaitingAll() { return sbGet('reservations', 'status=eq.waiting&select=id,item&limit=1000'); },
+  async updateResv(id, f) { await sbPatch('reservations', `id=eq.${enc(id)}`, f); },
+  async claimResv(id, from, to) {
+    const r = await fetch(`${SB_URL}/rest/v1/reservations?id=eq.${enc(id)}&status=eq.${enc(from)}`, { method: 'PATCH', headers: sbHeaders({ Prefer: 'return=representation' }), body: JSON.stringify({ status: to }) });
+    if (!r.ok) throw new Error(`supabase claimResv ${r.status} ${await r.text()}`);
+    return (await r.json()).length > 0;
+  },
   async ledgerForUser(uid) { return sbGet('ledger', `user_id=eq.${enc(uid)}&select=*&order=created.desc&limit=30`); },
   async createTitle(t) { await sbInsert('titles', t); },
   async titlesByShop(shopId) { return sbGet('titles', `shop=eq.${enc(shopId)}&select=*&order=created.asc`); },
@@ -252,7 +266,7 @@ const sbStore = {
 const DB = path.join(__dirname, 'db.json');
 const load = () => { try { return JSON.parse(fs.readFileSync(DB, 'utf8')); } catch { return { shops: {}, items: {}, orders: {} }; } };
 const save = (d) => fs.writeFileSync(DB, JSON.stringify(d, null, 2));
-const L = () => { const d = load(); d.users = d.users || {}; d.deposits = d.deposits || {}; d.charges = d.charges || {}; d.ledger = d.ledger || []; d.titles = d.titles || {}; d.user_titles = d.user_titles || []; d.shop_points = d.shop_points || {}; d.reviews = d.reviews || {}; d.shop_requests = d.shop_requests || {}; d.licenses = d.licenses || {}; d.inquiries = d.inquiries || {}; return d; };
+const L = () => { const d = load(); d.users = d.users || {}; d.deposits = d.deposits || {}; d.charges = d.charges || {}; d.ledger = d.ledger || []; d.titles = d.titles || {}; d.user_titles = d.user_titles || []; d.shop_points = d.shop_points || {}; d.reviews = d.reviews || {}; d.shop_requests = d.shop_requests || {}; d.licenses = d.licenses || {}; d.inquiries = d.inquiries || {}; d.reservations = d.reservations || {}; return d; };
 const fileStore = {
   async updateShop(id, f) { const d = L(); if (d.shops[id]) Object.assign(d.shops[id], f); save(d); },
   async shopsByOwner(uid) { return Object.values(L().shops).filter((s) => s.owner === uid).sort((a, b) => b.created - a.created); },
@@ -346,6 +360,16 @@ const fileStore = {
   async userCharges(uid) { return Object.values(L().charges).filter((c) => c.user_id === uid && c.status === 'waiting').sort((a, b) => b.created - a.created); },
   async claimCharge(t, to = 'done') { const d = L(); const c = d.charges[t]; if (!c || c.status !== 'waiting') return false; c.status = to; save(d); return true; },
   async addLedger(l) { const d = L(); d.ledger.push(l); save(d); },
+  // 예약
+  async createResv(r) { const d = L(); d.reservations[r.id] = r; save(d); },
+  async resvById(id) { return L().reservations[id]; },
+  async resvUserItem(uid, itemId) { return Object.values(L().reservations).filter((r) => r.user_id === uid && r.item === itemId && r.status === 'waiting').sort((a, b) => a.created - b.created); },
+  async resvByUser(uid) { return Object.values(L().reservations).filter((r) => r.user_id === uid).sort((a, b) => b.created - a.created).slice(0, 60); },
+  async resvWaitingForItem(itemId) { return Object.values(L().reservations).filter((r) => r.item === itemId && r.status === 'waiting').sort((a, b) => a.created - b.created); },
+  async resvWaitingByShop(shopId) { return Object.values(L().reservations).filter((r) => r.shop === shopId && r.status === 'waiting'); },
+  async resvWaitingAll() { return Object.values(L().reservations).filter((r) => r.status === 'waiting').map((r) => ({ id: r.id, item: r.item })); },
+  async updateResv(id, f) { const d = L(); if (d.reservations[id]) Object.assign(d.reservations[id], f); save(d); },
+  async claimResv(id, from, to) { const d = L(); const r = d.reservations[id]; if (!r || r.status !== from) return false; r.status = to; save(d); return true; },
   async ledgerForUser(uid) { return L().ledger.filter((l) => l.user_id === uid).sort((a, b) => b.created - a.created).slice(0, 30); },
   async createTitle(t) { const d = L(); d.titles[t.id] = t; save(d); },
   async titlesByShop(shopId) { return Object.values(L().titles).filter((t) => t.shop === shopId).sort((a, b) => a.created - b.created); },
@@ -707,7 +731,7 @@ ${curId ? '<label style="display:flex;gap:8px;align-items:center;margin:0 0 6px"
 </div>
 <script>(function(){var f=document.getElementById('imf'),v=document.getElementById('imv'),p=document.getElementById('imp');f.onchange=function(){var file=f.files[0];if(!file)return;var r=new FileReader();r.onload=function(){var im=new Image();im.onload=function(){var s=Math.min(1,640/Math.max(im.width,im.height));var c=document.createElement('canvas');c.width=Math.round(im.width*s);c.height=Math.round(im.height*s);var x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);x.drawImage(im,0,0,c.width,c.height);var d=c.toDataURL('image/jpeg',0.72);v.value=d;p.src=d;p.style.display='block'};im.onerror=function(){alert('이 사진은 읽을 수 없어요');f.value='';v.value=''};im.src=r.result};r.readAsDataURL(file)}})();</script>`;
 
-const NOTI = { sale: '판매 (새 주문)', deposit: '입금 대기 (계좌 입금 주문)', charge: '포인트 충전 신청', stock: '재고 알림 (재고가 0이 됐을 때)', review: '후기 (새 후기가 달렸을 때)', inquiry: '문의 (새 문의가 왔을 때)' };
+const NOTI = { sale: '판매 (새 주문)', deposit: '입금 대기 (계좌 입금 주문)', charge: '포인트 충전 신청', stock: '재고 알림 (재고가 0이 됐을 때)', review: '후기 (새 후기가 달렸을 때)', inquiry: '문의 (새 문의가 왔을 때)', resv: '예약 (품절 상품 예약·자동 구매)' };
 // 저장 형태: 주소 또는 주소#n=sale,warn  (#n= 없음 = 전부 켜짐, #n=- = 전부 꺼짐)
 const parseHook = (w) => {
   const [url, frag = ''] = String(w || '').split('#');
@@ -731,6 +755,7 @@ const MSG_DEF = {
   charge: { vars: { name: '입금자명', price: '충전 금액', shop: '상점 이름' }, example: '⏳ 충전 신청: {name} · {price}', sample: { name: '홍길동', price: '10,000원', shop: '내 상점' } },
   stock: { vars: { item: '상품 이름', shop: '상점 이름', link: '상품 링크' }, example: '📦 재고가 0이 됐어요: {item}', sample: { item: '치킨버거', shop: '내 상점', link: BASE + '/i/abc123' } },
   review: { vars: { item: '상품 이름', stars: '별 모양 점수', rating: '점수(숫자)', body: '후기 내용', shop: '상점 이름', link: '상품 링크' }, example: '⭐ 새 후기! {item} · {stars} ({rating}점)\n{body}', sample: { item: '치킨버거', stars: '★★★★★', rating: 5, body: '맛있어요!', shop: '내 상점', link: BASE + '/i/abc123' } },
+  resv: { vars: { item: '상품 이름', qty: '수량', shop: '상점 이름', link: '상품 링크' }, example: '🔖 새 예약! {item} × {qty}', sample: { item: '치킨버거', qty: 2, shop: '내 상점', link: BASE + '/i/abc123' } },
   inquiry: { vars: { title: '문의 제목', body: '문의 내용', item: '문의한 상품 이름 (없으면 비어 있음)', shop: '상점 이름', link: '문의 확인 링크' }, example: '💬 새 문의: {title}\n{body}', sample: { title: '배송 언제 되나요?', body: '주문했는데 아직 못 받았어요', item: '치킨버거', shop: '내 상점', link: BASE + '/m/abc123' } },
 };
 const parseMsgs = (shop) => {
@@ -1286,6 +1311,13 @@ route('GET', /^\/intro$/, (req, res) => {
   let html;
   try { html = fs.readFileSync(path.join(__dirname, 'linkmall.html'), 'utf8'); }
   catch { return notFound(res, '소개 페이지 파일(linkmall.html)이 없어요'); }
+  // 소개 페이지에도 새 로고 아이콘을 연결해요 (ICON_VER가 바뀌면 브라우저가 새 아이콘을 다시 받아요)
+  if (!/rel=["']icon["']/.test(html)) {
+    const tags = `<link rel="icon" type="image/png" href="/favicon.ico?v=${ICON_VER}">` +
+      `<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ICON_VER}">` +
+      `<link rel="manifest" href="/manifest.json?v=${ICON_VER}"><meta name="theme-color" content="#111111">`;
+    html = html.replace('</head>', tags + '</head>');
+  }
   send(res, 200, html, { 'Cache-Control': 'public, max-age=300' });
 });
 
@@ -1561,7 +1593,7 @@ route('POST', /^\/m\/([\w-]+)\/msgs$/, async (req, res, m) => {
 route('GET', /^\/m\/([\w-]+)$/, async (req, res, m) => {
   const shop = await manageShop(req, res, m[1]);
   if (!shop) return;
-  const items = await store.itemsByShop(shop.id);
+  const items = await store.itemsByShop(shop.id); const resvN = new Map(); try { for (const r of await store.resvWaitingByShop(shop.id)) resvN.set(r.item, (resvN.get(r.item) || 0) + (Number(r.qty) || 1)); } catch {}
   const orders = await store.ordersForItems(items.map((i) => i.id));
   const total = orders.reduce((s, o) => s + o.price, 0);
   const waiting = await store.waitingDeposits(shop.id);
@@ -1727,7 +1759,7 @@ ${titleSelect(titles, '')}
 <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" name="pub" checked style="width:auto;margin:0"> 상점 목록에 공개 (끄면 링크로만 열려요)</label>
 <button>등록</button></form>
 <h2>내 아이템</h2>
-${items.map((i) => `<div class="card">${i.image ? `<img src="/img/${i.id}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:12px;float:right;margin-left:10px">` : ''}<b>${esc(i.title)}</b> <span class="price">${won(i.price)}</span> <span class="sub">· ${i.pub ? '공개' : '비공개(링크로만)'}${i.stock != null ? ` · 재고 ${stockLines(i.stock).length}개` : ''}${itemLimit(i) ? ` · 인당 ${itemLimit(i)}개` : ''}</span><br><a href="/i/${i.id}">${BASE}/i/${i.id}</a><br><a href="/m/${shop.key}/items/${i.id}/edit">수정·삭제</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}`));
+${items.map((i) => `<div class="card">${i.image ? `<img src="/img/${i.id}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:12px;float:right;margin-left:10px">` : ''}<b>${esc(i.title)}</b> <span class="price">${won(i.price)}</span> <span class="sub">· ${i.pub ? '공개' : '비공개(링크로만)'}${i.stock != null ? ` · 재고 ${stockLines(i.stock).length}개` : ''}${itemLimit(i) ? ` · 인당 ${itemLimit(i)}개` : ''}${resvN.get(i.id) ? ` · 예약 대기 ${resvN.get(i.id)}개` : ''}</span><br><a href="/i/${i.id}">${BASE}/i/${i.id}</a><br><a href="/m/${shop.key}/items/${i.id}/edit">수정·삭제</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}`));
 });
 
 route('POST', /^\/m\/([\w-]+)\/items$/, async (req, res, m) => {
@@ -1808,6 +1840,7 @@ route('POST', /^\/m\/([\w-]+)\/items\/([\w-]+)$/, async (req, res, m) => {
     console.error('구매 한도 저장 실패 (items.buy_limit 칸이 있나요?)', e.message);
     return send(res, 500, page('저장 실패', `<h1>저장하지 못했어요</h1><p class="warn">데이터베이스에 구매 한도 칸이 아직 없는 것 같아요. Supabase SQL Editor에서 <code>${LIMIT_SQL}</code> 를 한 번 실행한 뒤 다시 저장해 주세요.</p><p><a href="/m/${shop.key}">← 상점 관리로</a></p>`));
   }
+  if (upd.stock != null) fulfillReservations(item.id).catch((e) => console.error('예약 처리 실패', e.message)); // 재고가 들어왔으면 예약자에게 자동 구매
   redirect(res, `/m/${shop.key}`);
 });
 
@@ -2052,6 +2085,170 @@ route('POST', /^\/i\/([\w-]+)\/buy$/, async (req, res, m) => {
   try { return await buyHandler(req, res, m); } finally { buyLocks.delete(k); }
 });
 
+// ---------- 예약 (품절 상품을 예약해 두면 재고가 들어올 때 자동으로 구매돼요) ----------
+// 예약하면 포인트가 먼저 빠지고(선결제), 취소하면 돌려받아요. 재고가 들어오면 예약한 순서대로 자동 구매·지급돼요.
+const MAX_RESV_QTY = 10;
+const RESV_SQL = "create table if not exists reservations (id text primary key, user_id text not null, shop text not null, item text not null, item_title text, qty integer not null default 1, total bigint not null, status text not null default 'waiting', order_token text, created bigint not null, done_at bigint); alter table reservations disable row level security;";
+const resvBusy = new Set();
+const safeResv = async (fn, fallback = []) => { try { return await fn(); } catch (e) { console.error('예약 불러오기 실패 (reservations 표가 있나요?)', e.message); return fallback; } };
+
+function reserveBlock(item, me, bal, disc, myResv) {
+  if (!me) return `<div class="nt">품절이에요. 예약해 두면 재고가 들어올 때 자동으로 구매돼요.</div><p><a class="btn" href="/login?next=${enc('/i/' + item.id)}">로그인하고 예약하기</a></p>`;
+  const mine = (myResv || []).find((r) => r.status === 'waiting');
+  if (mine) return `<div class="bx"><b>예약 중이에요</b><p class="sm" style="margin:6px 0 10px">${esc(mine.qty)}개 · ${pts(mine.total)} 선결제됨<br>재고가 들어오면 예약한 순서대로 자동 구매돼요.</p><form method="post" action="/reservations/${esc(mine.id)}/cancel" onsubmit="return confirm('예약을 취소할까요? 낸 포인트는 돌려받아요.')"><button style="background:#f4f4f5;color:#dc2626">예약 취소</button></form><p class="sm" style="margin:10px 0 0"><a href="/reservations">내 예약 보기</a></p></div>`;
+  const unit = discPrice(item.price, disc);
+  return `<form class="bx" method="post" action="/i/${item.id}/reserve"><b>품절 · 예약하기</b><p class="sm" style="margin:6px 0 10px">예약하면 포인트가 먼저 빠지고, 재고가 들어올 때 예약한 순서대로 자동 구매돼요. 취소하면 포인트를 돌려받아요.</p><input name="qty" type="number" inputmode="numeric" min="1" max="${MAX_RESV_QTY}" value="1" required aria-label="예약 수량"><p class="sm" style="margin:0 0 10px">1개 ${won(unit)} · 내 포인트 ${pts(bal)}</p><button>예약하기</button></form>`;
+}
+
+// 예약을 취소 상태로 바꾸고 선결제한 포인트를 돌려줘요
+async function refundResv(r, status, note) {
+  const total = Number(r.total) || 0;
+  await store.updateResv(r.id, { status });
+  if (total > 0) {
+    await store.addShopPoints(r.user_id, r.shop, total);
+    try { await store.addLedger({ id: rid(9), user_id: r.user_id, shop: r.shop, delta: total, kind: 'reserve_cancel', ref: r.id, note, created: Date.now() }); } catch (e) { console.error('ledger', e.message); }
+  }
+}
+
+// 예약 한 건을 실제 구매로 바꿔요 (재고가 모자라면 false)
+async function fulfillOne(r) {
+  const item = await store.itemById(r.item);
+  if (!item || item.stock == null) return false;
+  const qty = Math.max(1, Number(r.qty) || 1);
+  if (stockLines(item.stock).length < qty) return false;
+  const shop = await store.shopById(item.shop);
+  if (!shop || shop.deleted) return false;
+  if (!(await store.claimResv(r.id, 'waiting', 'processing'))) return false; // 그 사이 취소됐거나 이미 처리됨
+  if (isBlocked(shop, r.user_id)) { await refundResv(r, 'cancelled', '이용 제한으로 예약 취소'); return false; }
+  const total = Number(r.total) || 0;
+  let lines = null; let ordered = false;
+  try {
+    lines = await store.popStockN(item.id, qty);
+    if (!lines) { await store.updateResv(r.id, { status: 'waiting' }); return false; }
+    const order = { token: rid(16), item: item.id, price: total, paidAt: Date.now(), buyer: r.user_id, delivered: lines.join('\n') };
+    await store.createOrder(order);
+    ordered = true;
+    try { await store.updateResv(r.id, { status: 'done', order_token: order.token, done_at: Date.now() }); } catch (e) { console.error('예약 완료 표시 실패', r.id, e.message); }
+    try { await store.addLedger({ id: rid(9), user_id: r.user_id, shop: item.shop, delta: 0, kind: 'buy', ref: order.token, note: `예약 구매: ${item.title}${qty > 1 ? ` × ${qty}` : ''}`, created: Date.now() }); } catch (e) { console.error('ledger', e.message); }
+    try { // 칭호 페이백
+      const pb = await paybackOf(r.user_id, item.shop);
+      const back = Math.floor(total * pb / 100);
+      if (pb > 0 && back > 0) {
+        await store.addShopPoints(r.user_id, item.shop, back);
+        await store.addLedger({ id: rid(9), user_id: r.user_id, shop: item.shop, delta: back, kind: 'payback', ref: order.token, note: `칭호 페이백 ${pb}%`, created: Date.now() });
+      }
+    } catch (e) { console.error('페이백 실패', e.message); }
+    try {
+      if (item.title_id) { const t = await store.titleById(item.title_id); if (t) await store.grantTitle(r.user_id, t.id, item.shop); }
+      const autoTitles = (await store.titlesByShop(item.shop)).filter((t) => Number(t.auto_min) > 0);
+      if (autoTitles.length) {
+        const spent = (await store.ordersForItems((await store.itemsByShop(item.shop)).map((i) => i.id))).filter((o) => o.buyer === r.user_id).reduce((a, o) => a + Number(o.price || 0), 0);
+        for (const t of autoTitles) if (spent >= Number(t.auto_min)) await store.grantTitle(r.user_id, t.id, item.shop);
+      }
+    } catch (e) { console.error('칭호 지급 실패', e.message); }
+    try {
+      await notify(shop, `💰 새 주문! ${item.title}${qty > 1 ? ` × ${qty}` : ''} (${won(total)}) · 예약 구매`, 'sale', saleVars(shop, item, total, qty));
+      const after = await store.itemById(item.id);
+      if (after && after.stock != null && !stockLines(after.stock).length) await notify(shop, `📦 재고가 0이 됐어요: ${item.title}. 재고를 채워주세요.`, 'stock', { item: item.title, shop: shop.name, link: BASE + '/i/' + item.id });
+    } catch (e) { console.error('알림 실패', e.message); }
+    pushToUser(r.user_id, { title: '예약한 상품이 구매됐어요', body: `${item.title}${qty > 1 ? ` × ${qty}` : ''} · 구매 내역에서 확인하세요`, url: '/o/' + order.token }).catch((e) => console.error('push 실패', e.message));
+    return true;
+  } catch (e) {
+    console.error('예약 구매 처리 실패', r.id, e.message);
+    if (!ordered) { try { if (lines) await restoreLines(item.id, lines); await store.updateResv(r.id, { status: 'waiting' }); } catch (x) { console.error('예약 복구 실패', x.message); } }
+    return false;
+  }
+}
+
+// 재고가 들어온 상품의 예약을 먼저 예약한 순서대로 처리해요 (재고가 모자라 못 사는 예약은 건너뛰고, 다음 재고 때 다시 앞순서로 처리)
+async function fulfillReservations(itemId) {
+  if (resvBusy.has(itemId)) return;
+  resvBusy.add(itemId);
+  try {
+    const list = await store.resvWaitingForItem(itemId);
+    for (const r of list) { await fulfillOne(r); }
+  } finally { resvBusy.delete(itemId); }
+}
+
+const reserveHandler = async (req, res, m, u) => {
+  const item = await store.itemById(m[1]);
+  if (!item) return notFound(res, '아이템을 찾을 수 없어요');
+  const shop = await store.shopById(item.shop);
+  if (!shop || shop.deleted) return notFound(res, '아이템을 찾을 수 없어요');
+  if (isBlocked(shop, u.id)) return send(res, 403, page('이용 제한', `<h1>${BLOCKED_MSG}</h1>`));
+  if (!(await licenseOk(shop))) return send(res, 403, page('이용 불가', `<h1>${NO_LICENSE_MSG}</h1>`));
+  const back = `<p><a href="/i/${item.id}">돌아가기</a></p>`;
+  if (item.stock == null) return send(res, 400, page('예약 불가', `<h1>재고형 상품만 예약할 수 있어요</h1>${back}`));
+  if (stockLines(item.stock).length) return send(res, 400, page('재고 있음', `<h1>지금 재고가 있어요</h1><p class="sub">예약하지 않고 바로 구매할 수 있어요.</p>${back}`));
+  const f = await readForm(req);
+  const qty = parseInt(f.qty, 10);
+  if (!(qty >= 1 && qty <= MAX_RESV_QTY)) return send(res, 400, page('수량 오류', `<h1>예약은 1~${MAX_RESV_QTY}개까지 할 수 있어요</h1>${back}`));
+  const limB = itemLimit(item);
+  if (limB) {
+    const have = await boughtCount(item, u.id);
+    if (have + qty > limB) return send(res, 400, page('구매 한도', `<h1>인당 구매 한도를 넘어요</h1><p class="sub">이 상품은 한 사람이 ${limB}개까지 살 수 있어요. 지금까지 ${have}개 샀어요.</p>${back}`));
+  }
+  let mine;
+  try { mine = await store.resvUserItem(u.id, item.id); }
+  catch (e) {
+    console.error('예약 표 확인 실패', e.message);
+    const canMod = u.id === shop.owner || isAdmin(u);
+    return send(res, 500, page('예약 준비 중', canMod ? `<h1>예약 기능을 쓰려면 한 번 설정이 필요해요</h1><p class="warn">Supabase SQL Editor에서 아래를 한 번 실행해 주세요.</p><p><code>${esc(RESV_SQL)}</code></p>${back}` : `<h1>예약을 잠시 쓸 수 없어요</h1><p class="sub">판매자에게 문의해 주세요.</p>${back}`));
+  }
+  if (mine.length) return send(res, 400, page('이미 예약함', `<h1>이미 예약한 상품이에요</h1><p class="sub">수량을 바꾸려면 예약을 취소하고 다시 예약해 주세요.</p>${back}`));
+  const disc = await discountOf(u.id, item.shop);
+  const total = discPrice(item.price, disc) * qty;
+  const bal = await store.addShopPoints(u.id, item.shop, -total); // 포인트를 먼저 빼 둬요
+  if (bal == null) return send(res, 400, page('포인트 부족', `<h1>이 상점 포인트가 부족해요</h1><p class="sub">${qty > 1 ? `${qty}개 ` : ''}${pts(total)}가 필요해요. 예약하면 포인트가 먼저 빠지고, 취소하면 돌려받아요.</p><p><a href="/w/${item.shop}">충전하러 가기</a></p>`));
+  const r = { id: rid(9), user_id: u.id, shop: item.shop, item: item.id, item_title: String(item.title).slice(0, 80), qty, total, status: 'waiting', created: Date.now() };
+  try { await store.createResv(r); }
+  catch (e) {
+    await store.addShopPoints(u.id, item.shop, total); // 실패하면 포인트를 바로 돌려줘요
+    console.error('예약 저장 실패 (reservations 표가 있나요?)', e.message);
+    const canMod = u.id === shop.owner || isAdmin(u);
+    return send(res, 500, page('예약 실패', canMod ? `<h1>예약을 저장하지 못했어요</h1><p class="warn">Supabase SQL Editor에서 아래를 한 번 실행한 뒤 다시 시도해 주세요. (포인트는 돌려놨어요)</p><p><code>${esc(RESV_SQL)}</code></p>${back}` : `<h1>예약을 저장하지 못했어요</h1><p class="sub">포인트는 그대로예요. 잠시 뒤 다시 시도해 주세요.</p>${back}`));
+  }
+  try { await store.addLedger({ id: rid(9), user_id: u.id, shop: item.shop, delta: -total, kind: 'reserve', ref: r.id, note: `예약: ${item.title}${qty > 1 ? ` × ${qty}` : ''}`, created: Date.now() }); } catch (e) { console.error('ledger', e.message); }
+  notify(shop, `🔖 새 예약! ${item.title} × ${qty}`, 'resv', { item: item.title, qty, shop: shop.name, link: BASE + '/i/' + item.id }).catch((e) => console.error('알림 실패', e.message));
+  fulfillReservations(item.id).catch((e) => console.error('예약 처리 실패', e.message)); // 예약하는 사이 재고가 들어왔을 수도 있어서 한 번 더 확인
+  redirect(res, `/i/${item.id}`);
+};
+route('POST', /^\/i\/([\w-]+)\/reserve$/, async (req, res, m) => {
+  const u = await currentUser(req);
+  if (!u) return redirect(res, '/login?next=' + enc('/i/' + m[1]));
+  const k = u.id + '|resv|' + m[1];
+  if (buyLocks.has(k)) return send(res, 429, page('처리 중', `<h1>처리 중이에요</h1><p class="sub">이미 예약을 처리하고 있어요. 잠시 뒤에 확인해 주세요.</p><p><a href="/i/${esc(m[1])}">돌아가기</a></p>`));
+  buyLocks.add(k);
+  try { return await reserveHandler(req, res, m, u); } finally { buyLocks.delete(k); }
+});
+
+route('POST', /^\/reservations\/([\w-]+)\/cancel$/, async (req, res, m) => {
+  const u = await currentUser(req);
+  if (!u) return redirect(res, '/login?next=/reservations');
+  const r = await store.resvById(m[1]);
+  if (!r || r.user_id !== u.id) return notFound(res, '예약을 찾을 수 없어요');
+  if (await store.claimResv(r.id, 'waiting', 'cancelling')) await refundResv(r, 'cancelled', `예약 취소: ${r.item_title || ''}`);
+  redirect(res, '/reservations');
+});
+
+route('GET', /^\/reservations$/, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return redirect(res, '/login?next=/reservations');
+  const list = await safeResv(() => store.resvByUser(u.id));
+  const stat = { waiting: '예약 중', processing: '처리 중', done: '구매 완료', cancelled: '취소됨', cancelling: '취소 중' };
+  const card = (r) => `<div class="card"><b>${esc(r.item_title || '상품')}</b> <span class="sub">× ${esc(r.qty)} · ${pts(r.total)}</span><br><span class="sub">${esc(stat[r.status] || r.status)} · ${fmtDate(r.created)}</span><br>${r.status === 'done' && r.order_token ? `<a href="/o/${esc(r.order_token)}">구매 내역 보기</a>` : `<a href="/i/${esc(r.item)}">상품 보기</a>`}${r.status === 'waiting' ? `<form method="post" action="/reservations/${esc(r.id)}/cancel" onsubmit="return confirm('예약을 취소할까요? 낸 포인트는 돌려받아요.')" style="margin-top:8px"><button style="background:#f4f4f5;color:#dc2626">예약 취소</button></form>` : ''}</div>`;
+  send(res, 200, page('내 예약', `<a class="sub" href="/wallet">← 내 포인트</a><h1>내 예약</h1><p class="sub">품절 상품을 예약하면 재고가 들어올 때 예약한 순서대로 자동 구매돼요. 예약 금액은 먼저 빠지고, 취소하면 돌려받아요.</p>${list.map(card).join('') || '<div class="card"><span class="sub">아직 예약이 없어요.</span></div>'}`));
+});
+
+// 재고가 다른 경로로 들어왔거나 서버가 다시 켜진 경우를 위해 1분마다 대기 중인 예약을 한 번씩 확인해요
+let resvSweepWarned = false;
+setInterval(async () => {
+  try {
+    const ids = [...new Set((await store.resvWaitingAll()).map((r) => r.item))];
+    for (const id of ids) await fulfillReservations(id);
+  } catch (e) { if (!resvSweepWarned) { resvSweepWarned = true; console.error('예약 확인 실패 (reservations 표가 있나요?)', e.message); } }
+}, 60000).unref();
+
 // 내 포인트 · 칭호 (상점별 목록)
 route('GET', /^\/wallet$/, async (req, res) => {
   const u = await currentUser(req);
@@ -2070,7 +2267,7 @@ route('GET', /^\/wallet$/, async (req, res) => {
   }
   const cards = [];
   for (const r of rows) { const sh = await store.shopById(r.shop); if (sh) cards.push(`<a class="ca" href="/w/${sh.id}"><div class="card"><b>${esc(sh.name)}</b><br><span class="price">${pts(r.points)}</span></div></a>`); }
-  send(res, 200, page('내 포인트', `<a class="sub" href="/my">← 내 상점</a><h1>내 포인트</h1><p class="sub">포인트는 충전한 상점에서만 쓸 수 있어요 (1P = 1원). 회원번호 <b>${esc(u.id.slice(0, 8))}</b> · 칭호를 받을 때 판매자에게 알려주세요.</p>
+  send(res, 200, page('내 포인트', `<a class="sub" href="/my">← 내 상점</a><h1>내 포인트</h1><p class="sub"><a href="/reservations">내 예약 보기</a></p><p class="sub">포인트는 충전한 상점에서만 쓸 수 있어요 (1P = 1원). 회원번호 <b>${esc(u.id.slice(0, 8))}</b> · 칭호를 받을 때 판매자에게 알려주세요.</p>
 <p class="sub">표시 이름: <b>${u.name ? esc(u.name) : '아직 없어요'}</b> · <a href="/account">${u.name ? '바꾸기' : '정하기'}</a><br>이름을 정해두면 칭호를 받은 상점 맨 아래 명단에 이 이름으로 보여요.</p>
 ${titleRows.length ? `<h2>내 칭호</h2>${titleRows.join('')}` : ''}
 <h2>상점별 포인트</h2>
@@ -2091,7 +2288,7 @@ route('GET', /^\/w\/([\w-]+)$/, async (req, res, m) => {
   const bal = await store.shopPoints(u.id, shop.id);
   const pending = (await store.userShopCharges(u.id, shop.id)).filter((c) => Date.now() <= c.created + CHARGE_TTL);
   const log = await store.ledgerForUserShop(u.id, shop.id);
-  const label = { charge: '충전', buy: '구매', admin: '상점 조정', payback: '페이백' };
+  const label = { charge: '충전', buy: '구매', admin: '상점 조정', payback: '페이백', reserve: '예약 (선결제)', reserve_cancel: '예약 취소 (환불)' };
   send(res, 200, page(shop.name + ' 포인트', `<a class="sub" href="/s/${shop.id}">← ${esc(shop.name)}</a><h1>${esc(shop.name)} 포인트</h1>
 ${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
 <div class="card"><span class="sub">보유 포인트 (1P = 1원 · 이 상점에서만 사용)</span><br><span class="price" style="font-size:28px">${pts(bal)}</span></div>
@@ -2569,13 +2766,14 @@ route('GET', /^\/i\/([\w-]+)$/, async (req, res, m) => {
   const lim = itemLimit(item);
   const haveN = lim && me ? await boughtCount(item, me.id) : 0;
   const remain = lim ? Math.max(0, lim - haveN) : null;
+  const myResv = left === 0 && me ? await safeResv(() => store.resvUserItem(me.id, item.id)) : [];
   const body = `<a class="sm" style="text-decoration:none" href="/s/${shop.id}">← ${esc(shop.name)}</a>
 <div class="pc" style="margin-top:12px"><div class="im" style="aspect-ratio:4/3"><img src="${item.image ? `/img/${item.id}` : `/default-product.jpg?v=${ICON_VER}`}" alt=""></div><div class="pb"><h2>${esc(item.title)}</h2>
 <div class="rt">${ICO.star}<span>${reviews.length ? avg.toFixed(1) : '-'}</span>${reviews.length ? `<span class="sm">(${reviews.length})</span>` : ''}<span class="sm" style="margin-left:auto">판매 ${sold}건</span></div>
 <div class="pr">${disc ? `<span><s class="sm">${won(item.price)}</s> <b>${won(discPrice(item.price, disc))}</b> <span class="sm">(${disc}% 할인)</span></span>` : `<b>${won(item.price)}</b>`}<span>재고: <b>${stockTxt}</b></span></div></div></div>
 ${item.preview ? `<div class="bx" style="white-space:pre-wrap">${esc(item.preview)}</div>` : ''}
 ${lim ? `<div class="nt">인당 ${lim}개까지 살 수 있어요${me ? ` (내가 산 개수 ${haveN}개 · 남은 ${remain}개)` : ''}</div>` : ''}
-${left === 0 ? '<div class="nt">품절이에요</div>' : !licOk ? '<div class="nt">지금은 판매가 중단된 상점이에요</div>' : blockedMe ? `<div class="nt">${BLOCKED_MSG}</div>` : remain === 0 ? '<div class="nt">인당 구매 한도에 도달해서 더 살 수 없어요</div>' : pointsBlock(item, me, bal, shop, disc, remain)}
+${left === 0 ? (licOk && !blockedMe ? reserveBlock(item, me, bal, disc, myResv) : '<div class="nt">품절이에요</div>') : !licOk ? '<div class="nt">지금은 판매가 중단된 상점이에요</div>' : blockedMe ? `<div class="nt">${BLOCKED_MSG}</div>` : remain === 0 ? '<div class="nt">인당 구매 한도에 도달해서 더 살 수 없어요</div>' : pointsBlock(item, me, bal, shop, disc, remain)}
 <p style="margin:14px 0 0"><a class="sm" href="/s/${shop.id}/inquiry?item=${item.id}">이 상품 문의하기</a></p>
 <h3 style="font-size:20px;margin:30px 0 10px">후기 ${reviews.length ? `${avg.toFixed(1)} (${reviews.length})` : ''}</h3>
 ${reviews.map((r) => `<div class="bx">${stars(r.rating)} <span class="sm">구매자 ${esc(r.user_id.slice(0, 4))} · ${new Date(Number(r.created)).toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' })}</span><br><span style="white-space:pre-wrap">${esc(r.body)}</span>${canMod ? `<form method="post" action="/i/${item.id}/reviews/${r.id}/delete" onsubmit="return confirm('이 후기를 삭제할까요?')"><button class="bb" style="background:#dc2626;margin-top:10px;padding:12px;font-size:15px">후기 삭제</button></form>` : ''}</div>`).join('') || '<p class="sm">아직 후기가 없어요. 구매한 사람이 남길 수 있어요.</p>'}`;

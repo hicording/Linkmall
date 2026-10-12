@@ -107,6 +107,19 @@
   .step .n { flex: none; width: 2.6rem; height: 2.6rem; border-radius: 50%; background: var(--dark); color: #fff; display: grid; place-items: center; font-weight: 700; }
   .step span { font-weight: 500; }
 
+  /* pricing */
+  .plans { display: grid; gap: .8rem; margin: 2rem 0 3.5rem; }
+  .plan { background: var(--card); border: 1px solid var(--line); border-radius: 2rem; padding: 1.5rem 1.4rem; }
+  .plan small { color: var(--dim); font-weight: 500; }
+  .plan .pp { font-size: 1.5rem; font-weight: 900; letter-spacing: -0.04em; line-height: 1.3; margin: .3rem 0 .7rem; }
+  .plan p { margin: 0; color: var(--dim); font-size: .86rem; }
+  .plan p b { color: var(--ink); font-weight: 700; }
+  .plan ul { list-style: none; margin: .9rem 0 0; padding: 0; font-size: .86rem; }
+  .plan li { padding: .45rem 0 .45rem 1rem; border-top: 1px solid var(--line); position: relative; }
+  .plan li::before { content: ""; position: absolute; left: 0; top: 1.05rem; width: .38rem; height: .38rem; border-radius: 50%; background: var(--green); }
+  .plan.dk { background: var(--dark); border-color: var(--dark); color: #f3efe6; }
+  .plan.dk small, .plan.dk p { color: #a8a498; }
+
   /* CTA */
   .cta { background: var(--sage); border-radius: 2.2rem; padding: 2.4rem 1.7rem 2.6rem; margin: 3.5rem 0 4rem; }
   .cta .eyebrow { color: #6b7a5a; }
@@ -118,6 +131,7 @@
 
   @media (min-width: 52rem) {
     .grid { grid-template-columns: 1fr 1fr; }
+    .plans { grid-template-columns: repeat(3, 1fr); }
     .stats { max-width: 40rem; }
     .cta .btn { width: auto; }
     .cta { padding: 3.2rem 3rem; }
@@ -252,6 +266,27 @@
       <div class="notice"><b>이용 안내</b><br>상점 만들기, 판매·지급, 포인트 결제, 수동 충전, 칭호, 문의, 알림 등 <b>모든 기능은 무료</b>예요. <b>자동 충전만</b> 라이센스 키를 등록한 상점에서 쓸 수 있어요.</div>
       <div class="notice"><b>자동 충전 환경</b><br>자동 충전은 <b>안드로이드 폰</b>에서 설정해요 (아이폰은 수동 사용). 입금 알림을 받는 폰이 <b>켜져 있고 인터넷에 연결돼 있어야</b> 하고, 폰이 꺼져 있는 동안 들어온 입금은 [입금 확인] 버튼으로 직접 처리하면 돼요.</div>
       <div class="notice"><b>참고</b><br>웹페이지를 열 때 나타나는 Render 메시지는 DB 시작 메시지이니 안심하고 사용하세요.</div>
+    </div>
+
+    <div class="eyebrow" id="pricing">PRICING</div>
+    <h2>요금과 상점 개수.</h2>
+    <div class="plans">
+      <div class="plan">
+        <small>기본</small>
+        <div class="pp">무료</div>
+        <p>상점을 <b>3개</b>까지 바로 만들 수 있어요.</p>
+        <ul><li>판매와 재고 자동 지급</li><li>포인트 결제, 수동 충전</li><li>칭호, 문의, 알림</li></ul>
+      </div>
+      <div class="plan">
+        <small>상점 추가</small>
+        <div class="pp">운영자 승인</div>
+        <p>4개째부터는 운영자의 동의가 필요해요. 신청이 접수되면 확인 후 승인해요.</p>
+      </div>
+      <div class="plan dk">
+        <small>자동 충전 이용권</small>
+        <div class="pp">기간제 키</div>
+        <p>키를 등록한 기간 동안 자동 충전을 쓸 수 있어요. 모든 상점에 적용되고, 키를 또 넣으면 기간이 늘어나요.</p>
+      </div>
     </div>
 
     <div class="steps-card">
