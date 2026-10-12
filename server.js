@@ -265,7 +265,14 @@ const sbStore = {
   },
   async ordersForItems(ids) {
     if (!ids.length) return [];
-    return (await sbGet('orders', `item=in.(${ids.map(enc).join(',')})&select=*`)).map((o) => ({ token: o.token, item: o.item, price: o.price, paidAt: o.paid_at, delivered: o.delivered, buyer: o.buyer }));
+    // Supabase는 한 번에 최대 1000줄만 줘서, 주문이 많으면 옛날 주문이 잘려요 → 1000줄씩 이어서 전부 가져와요
+    const out = [];
+    for (let off = 0; off < 200000; off += 1000) {
+      const rows = await sbGet('orders', `item=in.(${ids.map(enc).join(',')})&select=*&order=paid_at.desc,token.asc&limit=1000&offset=${off}`);
+      out.push(...rows);
+      if (rows.length < 1000) break;
+    }
+    return out.map((o) => ({ token: o.token, item: o.item, price: o.price, paidAt: o.paid_at, delivered: o.delivered, buyer: o.buyer }));
   },
 };
 
@@ -654,8 +661,9 @@ const pointsBlock = (item, me, bal, shop, disc = 0, remain = null) => {
   const canCharge = !!(shop.bank && shop.account && shop.holder);
   const nextUrl = '/i/' + item.id;
   if (!me) return `<a class="bb" href="/login?next=${enc(nextUrl)}">로그인하고 구매하기</a>`;
-  const multi = item.stock != null;
-  const max = multi ? Math.max(1, Math.min(MAX_QTY, stockLines(item.stock).length, remain == null ? MAX_QTY : Math.max(1, remain))) : 1;
+  const licD = itemLicDays(item);
+  const multi = item.stock != null || licD > 0;
+  const max = multi ? Math.max(1, Math.min(MAX_QTY, licD ? MAX_QTY : stockLines(item.stock).length, remain == null ? MAX_QTY : Math.max(1, remain))) : 1;
   const chargeLink = canCharge ? `<a href="/w/${shop.id}">충전하기</a>` : '(이 상점은 아직 충전을 받지 않아요)';
   return `<form method="post" action="/i/${item.id}/buy" id="bf">
 ${multi ? `<div class="qt"><span style="font-weight:600">수량</span><div class="st"><button type="button" id="mi" aria-label="하나 빼기">−</button><input id="q" name="qty" type="number" inputmode="numeric" min="1" max="${max}" value="1"><button type="button" id="pl" aria-label="하나 더하기">+</button></div></div>
@@ -1125,8 +1133,27 @@ const boughtCount = async (item, uid) => (uid ? (await store.buyerOrders(item.id
 const buyLocks = new Set(); // 같은 사람이 같은 상품을 동시에 두 번 누르는 것 방지
 
 // 주문 생성 + 재고형 아이템이면 한 줄을 꺼내 구매자에게 지급
+// ---------- 자동 발급 라이센스 상품: 사면 그 자리에서 자동 충전 키를 만들어 지급 ----------
+// 상품 '잠금 정보' 칸에 [[LICENSE:일수]] 가 들어 있으면 그 상품은 구매할 때마다 새 키를 만들어줘요 (재고 필요 없음)
+const itemLicDays = (item) => { const m = /^\[\[LICENSE:(\d{1,5})\]\]$/.exec(String((item && item.secret) || '').trim()); const d = m ? parseInt(m[1], 10) : 0; return d >= 1 && d <= 36500 ? d : 0; };
+// 키를 공짜로 찍어내는 건 운영자만: 운영자 계정이 주인인 상점의 상품일 때만 발급해요
+const licShopOk = async (shop) => { if (!shop || !shop.owner) return false; const o = await store.userById(shop.owner); return !!o && isAdmin(o); };
+async function mintKeys(item, n) {
+  const keys = [];
+  try { for (let i = 0; i < n; i++) { const key = newLicenseKey(); await store.createLicense({ key, days: itemLicDays(item), created: Date.now(), note: ('자동발급: ' + item.title).slice(0, 40) }); keys.push(key); } }
+  catch (e) { await dropKeys(keys); throw e; }
+  return keys;
+}
+async function dropKeys(keys) { for (const k of keys || []) { try { await store.deleteUnusedLicense(k); } catch (e) { console.error('키 회수 실패', k, e.message); } } }
 async function placeOrder(order, item) {
   let line = null;
+  const licDays = itemLicDays(item);
+  if (licDays) { // 자동 발급 상품: 결제가 확인되면 키를 새로 만들어 지급
+    if (!(await licShopOk(await store.shopById(item.shop)))) { order.delivered = ''; }
+    else { const ks = await mintKeys(item, 1); order.delivered = ks.join('\n'); }
+    try { await store.createOrder(order); } catch (e) { if (order.delivered) await dropKeys(order.delivered.split('\n')); throw e; }
+    return order;
+  }
   if (item.stock != null) {
     line = await store.popStock(item.id);
     order.delivered = line == null ? '' : line;
@@ -1751,6 +1778,7 @@ ${c.image ? `<p style="margin:8px 0"><a href="/m/${shop.key}/charges/${c.token}/
 <!--TAB:orders::매출·주문-->
 <h2>매출 ${won(total)} · 판매 ${orders.reduce((a, o) => a + orderQty(o), 0)}건</h2>
 <h2>최근 주문</h2>
+<a class="btn" href="/m/${shop.key}/sales" style="margin-bottom:10px">🔍 전체 판매내역 검색 (옛날 주문 포함)</a>
 ${recent.map((o) => { const bc = o.buyer ? String(o.buyer).slice(0, 8) : ''; return `<div class="card tcard"><div class="row"><div style="flex:1;min-width:0"><b>${esc(titleOfItem.get(o.item) || '삭제된 상품')}</b><br><span class="sub">${won(o.price)} · ${fmtDate(o.paidAt)}<br>구매자 ${bc ? esc(bc) : '미연결'}</span></div>${bc ? (blockedIds.includes(o.buyer) ? '<span class="sub">차단됨</span>' : `<form method="post" action="/m/${shop.key}/blocks" onsubmit="return confirm('이 회원을 차단할까요?')" style="margin:0"><input type="hidden" name="code" value="${esc(bc)}"><button style="width:auto;padding:8px 14px;font-size:13px;background:#dc2626;border-radius:12px">차단</button></form>`) : ''}</div></div>`; }).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 <!--TAB:items::상품-->
 <h2>아이템 추가</h2>
@@ -1758,7 +1786,8 @@ ${recent.map((o) => { const bc = o.buyer ? String(o.buyer).slice(0, 8) : ''; ret
 <input name="title" placeholder="제목" required maxlength="80">
 <input name="price" type="number" min="100" step="100" placeholder="가격 (원)" required>
 <textarea name="preview" placeholder="미리보기 (결제 전 공개되는 설명)" required></textarea>
-<textarea name="secret" placeholder="잠금 정보 (결제 후에만 공개: 내용, 링크 등). 재고를 쓰면 비워도 돼요"></textarea>
+${ownerU && isAdmin(ownerU) ? '<input name="license_days" type="number" inputmode="numeric" min="1" max="36500" placeholder="자동 충전 키 자동 발급 (선택): 이용 일수. 적으면 살 때마다 새 키를 만들어줘요">' : ''}
+<textarea name="secret" placeholder="잠금 정보 (결제 후에만 공개: 내용, 링크 등). 재고를 쓰거나 키 자동 발급이면 비워도 돼요"></textarea>
 <textarea name="stock" placeholder="재고 (선택). 한 줄에 하나씩 적으면 구매할 때마다 한 줄씩 순서대로 지급돼요. 예) 치킨버거 ⏎ 불고기버거. 비우면 재고 제한 없이 같은 잠금 정보를 보여줘요"></textarea>
 <input name="buy_limit" type="number" inputmode="numeric" min="1" max="100000" placeholder="인당 구매 한도 (선택, 한 사람이 살 수 있는 최대 개수)">
 ${imgField('')}
@@ -1769,14 +1798,72 @@ ${titleSelect(titles, '')}
 ${items.map((i) => `<div class="card">${i.image ? `<img src="/img/${i.id}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:12px;float:right;margin-left:10px">` : ''}<b>${esc(i.title)}</b> <span class="price">${won(i.price)}</span> <span class="sub">· ${i.pub ? '공개' : '비공개(링크로만)'}${i.stock != null ? ` · 재고 ${stockLines(i.stock).length}개` : ''}${itemLimit(i) ? ` · 인당 ${itemLimit(i)}개` : ''}${resvN.get(i.id) ? ` · 예약 대기 ${resvN.get(i.id)}개` : ''}</span><br><a href="/i/${i.id}">${BASE}/i/${i.id}</a><br><a href="/m/${shop.key}/items/${i.id}/edit">수정·삭제</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}`));
 });
 
+// 판매내역 검색 (옛날 주문까지 전부): 상품명·구매자 회원번호·주문번호·기간으로 찾기
+route('GET', /^\/m\/([\w-]+)\/sales$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1]);
+  if (!shop) return;
+  const q = new URL(req.url, BASE).searchParams;
+  const kw = String(q.get('q') || '').trim().toLowerCase().slice(0, 60);
+  const itemF = String(q.get('item') || '').slice(0, 40);
+  const dayMs = (d, end) => { // 'YYYY-MM-DD' (한국 시간) → 밀리초
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d || '')) return null;
+    const t = Date.parse(d + 'T00:00:00+09:00');
+    return Number.isFinite(t) ? t + (end ? 86400000 - 1 : 0) : null;
+  };
+  const fromS = String(q.get('from') || ''); const toS = String(q.get('to') || '');
+  const from = dayMs(fromS, false); const to = dayMs(toS, true);
+  const PER = 50;
+  const pg = Math.max(1, parseInt(q.get('p'), 10) || 1);
+  const items = await store.itemsByShop(shop.id);
+  const titleOf = new Map(items.map((i) => [i.id, i.title]));
+  const all = await store.ordersForItems(items.map((i) => i.id));
+  const rows = all.filter((o) => {
+    const t = Number(o.paidAt || 0);
+    if (from != null && t < from) return false;
+    if (to != null && t > to) return false;
+    if (itemF && o.item !== itemF) return false;
+    if (kw) {
+      const hay = [titleOf.get(o.item) || '', o.buyer || '', o.token || '', o.item || ''].join(' ').toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  }).sort((a, b) => Number(b.paidAt || 0) - Number(a.paidAt || 0));
+  const sum = rows.reduce((a, o) => a + Number(o.price || 0), 0);
+  const cnt = rows.reduce((a, o) => a + orderQty(o), 0);
+  const pages = Math.max(1, Math.ceil(rows.length / PER));
+  const cur = Math.min(pg, pages);
+  const slice = rows.slice((cur - 1) * PER, cur * PER);
+  const blockedIds = parseBlocked(shop);
+  const base = `/m/${shop.key}/sales`;
+  const qs = (p) => { const u = new URLSearchParams(); if (kw) u.set('q', kw); if (itemF) u.set('item', itemF); if (fromS) u.set('from', fromS); if (toS) u.set('to', toS); if (p > 1) u.set('p', String(p)); const s2 = u.toString(); return base + (s2 ? '?' + s2 : ''); };
+  const cards = slice.map((o) => { const bc = o.buyer ? String(o.buyer).slice(0, 8) : '';
+    return `<div class="card tcard"><b>${esc(titleOf.get(o.item) || '삭제된 상품')}</b>${orderQty(o) > 1 ? ` <span class="sub">× ${orderQty(o)}</span>` : ''}<br><span class="sub">${won(o.price)} · ${fmtDate(o.paidAt)}<br>구매자 ${bc ? esc(bc) + (blockedIds.includes(o.buyer) ? ' (차단됨)' : '') : '미연결'}<br>주문번호 <code>${esc(String(o.token || '').slice(0, 12))}</code></span></div>`; }).join('');
+  const pager = pages > 1 ? `<div class="row" style="justify-content:center;margin:14px 0">${cur > 1 ? `<a class="chip" href="${qs(cur - 1)}">← 이전</a>` : ''}<span class="sub">${cur} / ${pages}</span>${cur < pages ? `<a class="chip" href="${qs(cur + 1)}">다음 →</a>` : ''}</div>` : '';
+  send(res, 200, page('판매내역 검색', `<a class="sub" href="/m/${shop.key}">← ${esc(shop.name)} 관리</a><h1>판매내역 검색</h1>
+<form class="card" method="get" action="${base}">
+<input name="q" value="${esc(kw)}" placeholder="상품명 · 구매자 회원번호 · 주문번호" maxlength="60" autocomplete="off">
+<select name="item"><option value="">모든 상품</option>${items.map((i) => `<option value="${esc(i.id)}"${i.id === itemF ? ' selected' : ''}>${esc(i.title)}</option>`).join('')}</select>
+<div class="row"><input type="date" name="from" value="${esc(fromS)}" aria-label="시작일"><span class="sub">~</span><input type="date" name="to" value="${esc(toS)}" aria-label="종료일"></div>
+<button style="margin-top:8px">검색</button>${kw || itemF || fromS || toS ? ` <a class="sub" href="${base}">조건 지우기</a>` : ''}</form>
+<h2>${rows.length}건 · 판매 ${cnt}개 · ${won(sum)}</h2>
+<p class="sub">전체 ${all.length}건 중 (옛날 주문 포함) · 한 번에 ${PER}건씩 보여요</p>
+${cards || '<p class="sub"><i class="empty">검색 결과가 없어요</i></p>'}${pager}`));
+});
+
 route('POST', /^\/m\/([\w-]+)\/items$/, async (req, res, m) => {
   const shop = await manageShop(req, res, m[1]);
   if (!shop) return;
   const f = await readForm(req);
   const price = parseInt(f.price, 10);
   if (!(price >= 100)) return send(res, 400, page('오류', '<h1>가격은 100원 이상이어야 해요</h1>'));
-  const secret = String(f.secret || '').slice(0, 10000);
+  let secret = String(f.secret || '').slice(0, 10000);
   const stock = parseStock(f.stock);
+  const licD = parseInt(f.license_days, 10);
+  if (licD >= 1) {
+    if (!(await licShopOk(shop))) return send(res, 403, page('오류', '<h1>키 자동 발급은 운영자 상점에서만 쓸 수 있어요</h1>'));
+    if (licD > 36500 || stock) return send(res, 400, page('오류', '<h1>일수는 1~36500이고, 키 자동 발급 상품은 재고를 같이 쓸 수 없어요</h1>'));
+    secret = `[[LICENSE:${licD}]]`;
+  }
   if (!secret.trim() && !stock) return send(res, 400, page('오류', '<h1>잠금 정보나 재고 중 하나는 적어주세요</h1>'));
   const item = { id: rid(9), shop: shop.id, pub: f.pub === 'on', title: String(f.title).slice(0, 80), price, preview: String(f.preview).slice(0, 2000), secret, created: Date.now() };
   if (stock) item.stock = stock;
@@ -2028,7 +2115,9 @@ const buyHandler = async (req, res, m) => {
   if (isBlocked(shopB, u.id)) return send(res, 403, page('이용 제한', `<h1>${BLOCKED_MSG}</h1>`));
   if (!(await licenseOk(shopB))) return send(res, 403, page('이용 불가', `<h1>${NO_LICENSE_MSG}</h1>`));
   const f = await readForm(req);
-  const multi = item.stock != null;
+  const licDays = itemLicDays(item);
+  if (licDays && !(await licShopOk(shopB))) return send(res, 403, page('이용 불가', '<h1>이 상품은 지금 살 수 없어요</h1>'));
+  const multi = item.stock != null || licDays > 0;
   let qty = multi ? parseInt(f.qty, 10) : 1;
   if (!(qty >= 1)) qty = 1;
   if (qty > MAX_QTY) return send(res, 400, page('수량 초과', `<h1>한 번에 최대 ${MAX_QTY}개까지 살 수 있어요</h1><p><a href="/i/${item.id}">돌아가기</a></p>`));
@@ -2043,7 +2132,9 @@ const buyHandler = async (req, res, m) => {
   const soldOut = () => send(res, 400, page('품절', `<h1>품절이에요</h1><p><a href="/i/${item.id}">돌아가기</a></p>`));
   let lines = null;
   let soldLast = false; // 이번 구매로 재고가 0이 됐는지
-  if (multi) {
+  const undoLines = async () => { if (!lines) return; if (licDays) await dropKeys(lines); else await restoreLines(item.id, lines); };
+  if (licDays) lines = await mintKeys(item, qty); // 자동 발급: 산 개수만큼 새 키를 만들어요
+  else if (multi) {
     lines = await store.popStockN(item.id, qty);
     if (lines == null) {
       const now = await store.itemById(item.id);
@@ -2056,12 +2147,12 @@ const buyHandler = async (req, res, m) => {
   }
   const bal = await store.addShopPoints(u.id, item.shop, -total);
   if (bal == null) {
-    if (lines) await restoreLines(item.id, lines);
+    await undoLines();
     return send(res, 400, page('포인트 부족', `<h1>이 상점 포인트가 부족해요</h1><p class="sub">${qty > 1 ? `${qty}개 ` : ''}${pts(total)}가 필요해요.</p><p><a href="/w/${item.shop}">충전하러 가기</a></p>`));
   }
   const order = { token: rid(16), item: item.id, price: total, paidAt: Date.now(), buyer: u.id, ...(lines ? { delivered: lines.join('\n') } : {}) };
   try { await store.createOrder(order); }
-  catch (e) { await store.addShopPoints(u.id, item.shop, total); if (lines) await restoreLines(item.id, lines); throw e; }
+  catch (e) { await store.addShopPoints(u.id, item.shop, total); await undoLines(); throw e; }
   try { await store.addLedger({ id: rid(9), user_id: u.id, shop: item.shop, delta: -total, kind: 'buy', ref: order.token, note: qty > 1 ? `${item.title} × ${qty}` : item.title, created: Date.now() }); } catch (e) { console.error('ledger', e.message); }
   try { // 칭호 페이백: 결제한 금액의 N%를 이 상점 포인트로 돌려줘요
     const pb = await paybackOf(u.id, item.shop);
@@ -2911,7 +3002,8 @@ route('GET', /^\/o\/([\w-]+)$/, async (req, res, m) => {
   }
   send(res, 200, page('내 보관함', `${staff && order.buyer !== (me && me.id) ? '<p class="sub">판매자·운영자로 보는 중이에요 (구매자 화면과 같아요)</p>' : ''}<h1>잠금 해제됨</h1><h2>${esc(item.title)}</h2>
 ${order.delivered ? `<p class="sub">지급된 상품${orderQty(order) > 1 ? ` (${orderQty(order)}개)` : ''}</p><div class="secret">${esc(order.delivered)}</div>` : (item.stock != null && order.delivered === '' ? '<div class="warn">재고가 부족해서 아직 지급되지 않았어요. 판매자가 직접 보내드려요. 판매자에게 문의해 주세요.</div>' : '')}
-${item.secret ? `<div class="secret">${esc(item.secret)}</div>` : ''}
+${item.secret && !itemLicDays(item) ? `<div class="secret">${esc(item.secret)}</div>` : ''}
+${itemLicDays(item) && order.delivered ? '<p class="sub">내 상점 → 자동 충전 이용권 칸에 키를 붙여넣으면 등록돼요</p>' : ''}
 <p class="sub">이 주소를 북마크하면 언제든 다시 볼 수 있어요: <code>${BASE}/o/${order.token}</code></p>
 ${me && order.buyer === me.id && shopO && !shopO.deleted ? `<p><a href="/s/${shopO.id}/inquiry?item=${item.id}">판매자에게 문의하기</a></p>` : ''}
 ${reviewBox}`), { 'Cache-Control': 'no-store' });
