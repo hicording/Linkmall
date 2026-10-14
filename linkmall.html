@@ -133,7 +133,11 @@
   .tag { display: inline-block; font-size: .72rem; font-weight: 900; padding: .15rem .6rem; border-radius: 999px; vertical-align: middle; margin-left: .3rem; }
   .tag.free { background: var(--sage); color: var(--green); }
   .tag.paid { background: var(--dark); color: #fff; }
+  .tag.plus { background: #9db58a; color: #1c1b17; }
+  .fcard .tag.paid { background: #fff; color: #1c1b17; }
   .plan.free { border: 2px solid var(--green); }
+  .plan-note { margin: -2.4rem 0 3.5rem; color: var(--dim); font-size: .84rem; line-height: 1.65; }
+  .plan-note b { color: var(--ink); font-weight: 700; }
   .plan .badge2 { display: inline-block; font-size: .72rem; font-weight: 900; padding: .15rem .65rem; border-radius: 999px; margin-left: .4rem; background: var(--green); color: #fff; vertical-align: middle; }
   .plan.dk .badge2 { background: #fff; color: var(--ink); }
   .plan .pp small { font-size: .9rem; font-weight: 700; color: var(--dim); letter-spacing: -0.02em; }
@@ -189,18 +193,18 @@
 
   <header class="hero">
     <h1>내 상점, 무료로 쉽고 빠르게 열어보세요.</h1>
-    <p>상품 등록부터 재고 자동 지급, 포인트 충전, 단골 관리까지 링크몰 하나로 해결할 수 있어요. <b>돈 내는 건 라이센스 하나뿐</b>이고, 나머지는 전부 무료예요.</p>
+    <p>상품 등록부터 재고 자동 지급, 포인트 충전, 단골 관리까지 링크몰 하나로 해결할 수 있어요. 기본 기능은 <b>전부 무료(Lite)</b>이고, 더 필요할 때만 <b>Plus·Pro 라이센스</b>를 쓰면 돼요.</p>
     <div class="actions">
       <a class="btn" href="https://linkmall.onrender.com" target="_blank" rel="noopener">내 상점 만들러 가기
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
     </div>
     <div class="freebar">
       <div class="fb free"><span class="badge">무료</span><div><b>상점 만들기, 판매·재고 지급, 포인트 결제, 수동 충전, 칭호, 문의, 알림까지 전부 무료</b>예요. 상점도 3개까지 그냥 만들 수 있어요.</div></div>
-      <div class="fb paid"><span class="badge">유료</span><div><b>라이센스만 유료</b>예요. 자동 충전, 운영 도구, 꾸미기, 상점 5개, 예약 판매까지 담은 이용권이 <b>30일에 5,000원</b>이고, 쓰지 않으면 한 푼도 안 들어요. 이용권은 키 판매소에서 <b>포인트를 충전해 사면 키가 바로 자동 발급</b>돼요.</div></div>
+      <div class="fb paid"><span class="badge">유료</span><div><b>라이센스는 두 가지</b>예요. <b>Plus 30일 3,000원</b>, <b>Pro 30일 5,000원</b>이고, 쓰지 않으면 한 푼도 안 들어요. 이용권은 키 판매소에서 <b>포인트를 충전해 사면 키가 바로 자동 발급</b>돼요.</div></div>
     </div>
     <div class="stats">
-      <div class="stat"><b>무료</b><span>라이센스 혜택을 뺀 모든 기능</span></div>
-      <div class="stat"><b>5,000원</b><span>라이센스만 유료 (30일 기준)</span></div>
+      <div class="stat"><b>Lite 무료</b><span>기본 기능은 전부 무료</span></div>
+      <div class="stat"><b>3,000원~</b><span>Plus·Pro 라이센스 (30일 기준)</span></div>
       <div class="stat"><b>포인트</b><span>상점별로 충전하고 결제 (1P=1원)</span></div>
     </div>
 
@@ -247,17 +251,18 @@
           <li>인당 구매 한도 제한 가능</li>
           <li><b>판매내역 검색</b>: 상품명·구매자 회원번호·주문번호·기간으로 찾기, <b>옛날 주문까지 전부</b> 조회 (건수·합계 금액 표시, 50건씩 넘겨보기)</li>
           <li><b>품절 예약</b>: 품절 상품을 예약해 두면 재고가 들어올 때 예약한 순서대로 자동 구매 (포인트 선결제, 취소하면 환불)</li>
+          <li><b>재입고 알림</b>: 품절 상품에서 [알림 받기]를 누르면 재고가 들어올 때 푸시로 알려줘요 <span class="tag free">무료</span></li>
         </ul>
       </article>
 
       <article class="fcard">
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="13" rx="2.5"/><path d="M3 10.5h18"/></svg></div>
         <h3>결제·포인트</h3>
-        <p class="intro">상점마다 따로 쓰는 포인트. 수동 충전은 무료, 자동 충전은 라이센스 기능이에요.</p>
+        <p class="intro">상점마다 따로 쓰는 포인트. 수동 충전은 무료, 자동 충전은 Pro 기능이에요.</p>
         <ul>
           <li><b>상점별 포인트</b> 결제 (1P = 1원), 포인트는 그 상점에서만 사용</li>
           <li>계좌 입금 충전 신청, 입금 사진 첨부, <b>수동 확인</b>(판매자가 [입금 확인]을 누르면 포인트 지급) <span class="tag free">무료</span></li>
-          <li><b>자동 충전</b>: 은행 입금 알림을 판매자 폰의 <b>Automate 앱</b>이 서버로 전달하고, 입금자명·금액이 신청과 같으면 포인트를 바로 지급 <span class="tag paid">유료 · 30일 5,000원</span></li>
+          <li><b>자동 충전</b>: 은행 입금 알림을 판매자 폰의 <b>Automate 앱</b>이 서버로 전달하고, 입금자명·금액이 신청과 같으면 포인트를 바로 지급 <span class="tag paid">Pro</span></li>
           <li><b>이용권 키 자동 발급</b>: 키 판매소에서 포인트를 충전하고 구매하면 <b>그 자리에서 라이센스 키가 만들어져 바로 지급</b>돼요. 기다릴 필요 없이 내 상점에서 바로 등록</li>
           <li>충전 확인 방식을 상점마다 <b>수동 / 자동</b>으로 선택, 자동으로 처리되지 않은 건은 언제든 수동 승인 가능</li>
           <li>같은 이름·같은 금액 신청이 겹치면 자동 처리를 건너뛰고 직접 승인하도록 안내</li>
@@ -292,28 +297,55 @@
       </article>
 
       <article class="fcard">
-        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div>
-        <h3>운영 도구 <span class="tag paid">라이센스</span></h3>
-        <p class="intro">상점을 더 똑똑하게, 더 크게 운영하는 도구예요.</p>
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.6 13.4l-7.2 7.2a2 2 0 01-2.8 0L3 13V3h10l7.6 7.6a2 2 0 010 2.8z"/><circle cx="7.5" cy="7.5" r="1.2"/></svg></div>
+        <h3>판매·프로모션</h3>
+        <p class="intro">더 많이 팔리게 하는 도구들이에요.</p>
         <ul>
-          <li><b>매출 통계 대시보드</b>: 일·주·월별 매출, 인기 상품, 재구매율을 한눈에</li>
-          <li><b>단골 등급·쿠폰</b>: 구매 금액에 따라 등급이 자동으로 오르고, 등급별 할인과 쿠폰 지급</li>
-          <li><b>구매자 블랙리스트·어뷰징 차단</b>: 의심스러운 반복 구매·충전을 자동으로 막아요</li>
-          <li><b>다중 관리자(직원 계정)</b>: 직원마다 권한을 나눠서 상점 운영을 맡길 수 있어요</li>
+          <li><b>예약 판매·예약 공개</b>: 정해 둔 시간에 상품이 자동으로 열리고 닫혀요 <span class="tag plus">Plus</span></li>
+          <li><b>기간 한정 세일</b>: "3일간 20% 할인"처럼 기간을 걸면 끝나는 시각에 원래 가격으로 자동 복귀 <span class="tag plus">Plus</span></li>
+          <li><b>쿠폰</b>: % 또는 원 할인, 사용 횟수·기간 제한, 1인 1회. Plus는 10개, Pro는 20개까지 <span class="tag plus">Plus</span></li>
+          <li><b>구매 후 자동 안내 문구</b>: 구매가 끝나면 사용 방법을 자동으로 보여줘서 같은 문의가 줄어요 <span class="tag plus">Plus</span></li>
+          <li><b>묶음 할인</b>: 2개 이상 같이 사면 개당 할인 <span class="tag paid">Pro</span></li>
+          <li><b>충전 보너스 이벤트</b>: "이번 주 충전 10% 추가 지급"처럼 기간을 정해 보너스 포인트 지급 <span class="tag paid">Pro</span></li>
+        </ul>
+      </article>
+
+      <article class="fcard">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg></div>
+        <h3>통계·내보내기</h3>
+        <p class="intro">숫자를 보고, 정리하고, 한 번에 처리해요.</p>
+        <ul>
+          <li><b>매출 통계 대시보드</b>: 일·주·월별 매출, 인기 상품, 재구매율을 한눈에 <span class="tag plus">Plus</span></li>
+          <li><b>매출·주문 엑셀(CSV) 내보내기</b>: 정산과 세금 정리에 바로 사용 <span class="tag plus">Plus</span></li>
+          <li><b>상품 복사</b>: 비슷한 상품을 한 번에 복제 <span class="tag plus">Plus</span></li>
+          <li><b>요일·시간대별 매출</b>: 언제 제일 잘 팔리는지 보고 이벤트 시간을 잡아요 <span class="tag paid">Pro</span></li>
+          <li><b>주간 매출 리포트 푸시</b>: 매주 월요일, 지난주 매출과 증감·인기 상품을 알림으로 받아요 <span class="tag paid">Pro</span></li>
+          <li><b>상품 일괄 등록</b>: CSV로 많은 상품을 한꺼번에 올려요 <span class="tag paid">Pro</span></li>
+        </ul>
+      </article>
+
+      <article class="fcard">
+        <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 4.5-3.2 7.6-8 9-4.8-1.4-8-4.5-8-9V6z"/></svg></div>
+        <h3>보호·팀·알림</h3>
+        <p class="intro">상점을 안전하게, 여럿이 함께 지켜요.</p>
+        <ul>
+          <li><b>재고 부족 알림</b>: 재고가 얼마 안 남으면 푸시와 디스코드로 미리 알려줘요 <span class="tag plus">Plus</span></li>
+          <li><b>만료 임박 알림</b>: 만료 7일·3일·1일 전에 알려줘서 갑자기 끊기지 않아요 <span class="tag plus">Plus</span></li>
+          <li><b>어뷰징 자동 차단</b>: 충전·예약을 1시간에 10번 넘게 취소하거나 쿠폰 코드를 10번 넘게 틀리는 회원을 자동으로 막고 알려줘요. 입금이 확인된 충전은 세지 않아요 <span class="tag paid">Pro</span></li>
+          <li><b>직원 계정 5명</b>: 상품·주문·충전 승인·문의를 맡길 수 있어요. 이름·계좌·알림·꾸미기는 주인만 바꿔요 <span class="tag paid">Pro</span></li>
         </ul>
       </article>
 
       <article class="fcard">
         <div class="ico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.9 4.6 4.9.4-3.7 3.2 1.1 4.8L12 13.6 7.8 16l1.1-4.8L5.2 8l4.9-.4z"/><path d="M5 21h14"/></svg></div>
-        <h3>꾸미기·한도·예약 <span class="tag paid">라이센스</span></h3>
-        <p class="intro">내 상점답게 꾸미고, 더 많이, 알아서 운영해요.</p>
+        <h3>꾸미기·한도</h3>
+        <p class="intro">내 상점답게 꾸미고, 더 많이 만들어요.</p>
         <ul>
-          <li><b>상점 커스텀 디자인</b>: 테마 색상, 배너, 로고를 내 마음대로</li>
-          <li><b>전용 주소</b>: 나만의 상점 주소로 접속</li>
-          <li><b>프리미엄 칭호·뱃지</b>: 라이센스 이용자 표시와 전용 뱃지</li>
-          <li><b>상점 5개까지</b>: 기본 3개에서 <b>5개</b>로 늘어나요</li>
-          <li><b>예약 판매·예약 공개</b>: 정해 둔 시간에 상품이 자동으로 열리고 닫혀요</li>
-          <li><b>만료 임박 알림</b>: 만료 7일·3일·1일 전에 알려줘서 갑자기 끊기지 않아요</li>
+          <li><b>상점 꾸미기</b>: 테마 색상, 로고, 배너를 내 마음대로 <span class="tag plus">Plus</span></li>
+          <li><b>공지 배너</b>: 이벤트·점검 안내를 눈에 띄는 배너로 상점 맨 위에 띄우고 노출 기간을 정해요 <span class="tag plus">Plus</span></li>
+          <li><b>전용 주소</b>: 나만의 상점 주소(/@이름)로 접속 <span class="tag paid">Pro</span></li>
+          <li><b>PRO 뱃지·칭호 30개</b>: 상점 이름 옆에 뱃지가 붙고, 칭호를 기본 10개에서 30개까지 만들 수 있어요 <span class="tag paid">Pro</span></li>
+          <li><b>상점 개수 확대</b>: 기본 3개에서 Plus는 4개, Pro는 5개까지 <span class="tag plus">Plus</span></li>
         </ul>
       </article>
     </div>
@@ -325,7 +357,7 @@
     <div class="eyebrow">NOTICE</div>
     <h2>시작 전에 알아두세요.</h2>
     <div class="notices">
-      <div class="notice"><b>이용 안내</b><br>상점 만들기, 판매·지급, 포인트 결제, 수동 충전, 칭호, 문의, 알림 등 <b>모든 기능은 무료</b>예요. <b>유료는 라이센스 하나뿐</b>이고, <b>30일에 5,000원</b>짜리 이용권(라이센스 키)을 등록하면 자동 충전, 운영 도구, 꾸미기, 상점 5개, 예약 판매·공개, 만료 임박 알림을 모두 쓸 수 있어요. 키는 <b>키 판매소에서 포인트로 사면 즉시 자동 발급</b>되니 따로 연락하지 않아도 돼요.</div>
+      <div class="notice"><b>이용 안내</b><br>상점 만들기, 판매·지급, 포인트 결제, 수동 충전, 칭호, 문의, 알림 등 <b>기본 기능은 모두 무료(Lite)</b>예요. 더 필요하면 <b>Plus(30일 3,000원)</b> 또는 <b>Pro(30일 5,000원)</b> 이용권(라이센스 키)을 등록하세요. 키는 <b>키 판매소에서 포인트로 사면 즉시 자동 발급</b>되니 따로 연락하지 않아도 돼요.</div>
       <div class="notice"><b>자동 충전 환경</b><br>자동 충전은 <b>안드로이드 폰</b>에서 설정해요 (아이폰은 수동 사용). 입금 알림을 받는 폰이 <b>켜져 있고 인터넷에 연결돼 있어야</b> 하고, 폰이 꺼져 있는 동안 들어온 입금은 [입금 확인] 버튼으로 직접 처리하면 돼요.</div>
       <div class="notice"><b>참고</b><br>웹페이지를 열 때 나타나는 Render 메시지는 DB 시작 메시지이니 안심하고 사용하세요.</div>
     </div>
@@ -334,23 +366,25 @@
     <h2>무료로 시작하고, 필요할 때만 결제하세요.</h2>
     <div class="plans">
       <div class="plan free">
-        <small>기본 <span class="badge2">무료</span></small>
+        <small>Lite <span class="badge2">무료</span></small>
         <div class="pp">0원</div>
-        <p>상점을 <b>3개까지 무료</b>로 만들 수 있어요. 라이센스 혜택을 뺀 모든 기능이 무료예요.</p>
-        <ul><li>판매와 재고 자동 지급</li><li>포인트 결제, 수동 충전</li><li>칭호, 문의, 알림</li></ul>
+        <p>상점을 <b>3개까지 무료</b>로 만들 수 있어요. 기본 기능은 전부 무료예요.</p>
+        <ul><li>판매와 재고 자동 지급</li><li>포인트 결제, 수동 충전</li><li>칭호, 문의, 알림</li><li>재입고 알림</li></ul>
       </div>
       <div class="plan">
-        <small>상점 개수 늘리기</small>
-        <div class="pp">1개당 1,000원</div>
-        <p>4개째부터는 <b>상점 1개당 1,000원</b>이에요. 관리자가 보기에 서버가 넉넉한 대형이면 <b>재량껏 무료로 추가</b>해 줄 수도 있어요.</p>
+        <small>Plus <span class="badge2">가성비</span></small>
+        <div class="pp">3,000원 <small>/ 30일</small></div>
+        <p>혼자 운영하는 판매자에게 필요한 기능을 담았어요. <b>상점 4개</b>까지 만들 수 있어요.</p>
+        <ul><li>만료 임박·재고 부족 알림</li><li>예약 판매·공개, 기간 한정 세일</li><li>구매 후 자동 안내 문구, 상품 복사, 상점 공지 배너</li><li>전체 매출 통계 (주간·월간·인기 상품·재구매율)</li><li>쿠폰 10개</li><li>꾸미기 (테마 색상·로고·배너)</li><li>매출·주문 엑셀 내보내기</li></ul>
       </div>
       <div class="plan dk">
-        <small>라이센스 이용권 <span class="badge2">유일한 유료 기능</span></small>
+        <small>Pro <span class="badge2">전체 혜택</span></small>
         <div class="pp">5,000원 <small>/ 30일</small></div>
-        <p>키를 등록한 30일 동안 아래 혜택을 모두 쓸 수 있어요. 모든 상점에 적용되고, 키를 또 넣으면 기간이 늘어나요. 키는 <b style="color:#fff">포인트를 충전해 사면 바로 자동 발급</b>돼요. <b style="color:#fff">라이센스를 안 쓰면 비용은 0원</b>이에요.</p>
-        <ul><li>자동 충전</li><li>운영 도구 (매출 통계, 단골 등급·쿠폰, 차단, 다중 관리자)</li><li>꾸미기 (커스텀 디자인, 전용 주소, 프리미엄 뱃지)</li><li>상점 5개까지, 예약 판매·공개</li><li>만료 임박 알림</li></ul>
+        <p>Plus 혜택을 <b style="color:#fff">전부 포함</b>하고, 규모 있는 상점을 위한 자동화와 팀 기능이 더해져요. <b style="color:#fff">상점 5개</b>까지 만들 수 있어요.</p>
+        <ul><li>쿠폰 20개</li><li>전용 주소, PRO 뱃지</li><li>자동 충전, 충전 보너스 이벤트</li><li>어뷰징 자동 차단, 직원 계정 5명</li><li>상품 일괄 등록, 묶음 할인</li><li>요일·시간대별 매출, 주간 매출 리포트 푸시</li></ul>
       </div>
     </div>
+    <p class="plan-note">내 상점 화면에서 <b>키 판매소 포인트로 바로 구독</b>할 수 있어요. 만료 하루 전에 자동으로 연장되고, <b>포인트가 모자라면 자동으로 해지</b>돼요. 키를 사서 등록하는 방식도 쓸 수 있고, 키를 또 넣으면 기간이 늘어나요. 라이센스를 안 쓰면 비용은 0원이에요. 상점이 더 필요하면 <b>1개당 1,000원</b>에 추가할 수 있어요.</p>
 
     <div class="steps-card">
       <div class="steps-head"><div><small>Setup progress</small><h3>상점 준비</h3></div><span class="pill">4 steps</span></div>
@@ -363,7 +397,7 @@
     <div class="cta" id="contact">
       <div class="eyebrow">GET STARTED</div>
       <h2>지금 시작해 보세요.</h2>
-      <p>상점 만들기부터 판매까지 전부 무료예요. 라이센스를 쓸 때만 30일에 5,000원이 들어요.</p>
+      <p>상점 만들기부터 판매까지 전부 무료예요. 더 필요할 때만 Plus는 30일 3,000원, Pro는 30일 5,000원이에요.</p>
       <a class="btn" id="toTop" href="#top">내 상점 만들러 가기
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></a>
     </div>

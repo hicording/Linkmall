@@ -172,7 +172,12 @@ const sbStore = {
   async createLicense(r) { await sbInsert('licenses', r); },
   async shopBySlug(slug) { const r = await sbGet('shops', `opts=like.*${enc('"slug":"' + slug + '"')}*&select=*&limit=5`); return r.find((x) => { try { return JSON.parse(x.opts).slug === slug; } catch { return false; } }); },
   async shopsByStaff(uid) { const r = await sbGet('shops', `opts=like.*${enc('"id":"' + uid + '"')}*&select=*&limit=50`); return r.filter((x) => { try { return (JSON.parse(x.opts).staff || []).some((y) => y.id === uid); } catch { return false; } }); },
-  async usersLicenseExpiring(from, to) { return sbGet('users', `license_until=gt.${Number(from)}&license_until=lt.${Number(to)}&select=id,email,license_until&limit=1000`); },
+  async usersLicenseExpiring(from, to) {
+    const w = (c) => `and(${c}.gt.${Number(from)},${c}.lt.${Number(to)})`;
+    try { return await sbGet('users', `or=(${w('license_until')},${w('plus_until')})&select=id,email,license_until,plus_until,sub_plan&limit=1000`); }
+    catch { return sbGet('users', `license_until=gt.${Number(from)}&license_until=lt.${Number(to)}&select=id,email,license_until&limit=1000`); } // plus_until 칸이 아직 없을 때
+  },
+  async usersWithSub() { return sbGet('users', 'sub_plan=not.is.null&select=id,license_until,plus_until,sub_plan&limit=1000'); },
   async listLicenses() { return sbGet('licenses', 'select=*&order=created.desc&limit=40'); },
   async deleteUnusedLicense(k) { await sbDelete('licenses', `key=eq.${enc(k)}&used_by=is.null`); },
   async claimLicense(k, uid) {
@@ -365,7 +370,8 @@ const fileStore = {
   async createLicense(r) { const d = L(); d.licenses[r.key] = r; save(d); },
   async shopBySlug(slug) { return Object.values(load().shops).find((x) => { try { return JSON.parse(x.opts || '{}').slug === slug; } catch { return false; } }); },
   async shopsByStaff(uid) { return Object.values(load().shops).filter((x) => { try { return (JSON.parse(x.opts || '{}').staff || []).some((y) => y.id === uid); } catch { return false; } }); },
-  async usersLicenseExpiring(from, to) { return Object.values(L().users).filter((x) => Number(x.license_until) > from && Number(x.license_until) < to).map((x) => ({ id: x.id, email: x.email, license_until: x.license_until })); },
+  async usersLicenseExpiring(from, to) { const ok = (t) => Number(t) > from && Number(t) < to; return Object.values(L().users).filter((x) => ok(x.license_until) || ok(x.plus_until)).map((x) => ({ id: x.id, email: x.email, license_until: x.license_until, plus_until: x.plus_until, sub_plan: x.sub_plan })); },
+  async usersWithSub() { return Object.values(L().users).filter((x) => x.sub_plan).map((x) => ({ id: x.id, license_until: x.license_until, plus_until: x.plus_until, sub_plan: x.sub_plan })); },
   async listLicenses() { return Object.values(L().licenses).sort((a, b) => b.created - a.created).slice(0, 40); },
   async deleteUnusedLicense(k) { const d = L(); if (d.licenses[k] && !d.licenses[k].used_by) delete d.licenses[k]; save(d); },
   async claimLicense(k, uid) { const d = L(); const x = d.licenses[k]; if (!x || x.used_by) return null; x.used_by = uid; x.used_at = Date.now(); save(d); return x; },
@@ -1035,9 +1041,15 @@ const MIN_CHARGE = 1000; const MAX_CHARGE = 500000;
 const pts = (n) => Number(n || 0).toLocaleString('ko-KR') + 'P';
 const fmtDate = (t) => new Date(Number(t)).toLocaleString('ko-KR', { timeZone: 'Asia/Seoul' });
 const FREE_SHOPS = 3; // 운영자 동의 없이 만들 수 있는 상점 수
-const LIC_SHOPS = 5; // 라이센스가 있으면 만들 수 있는 상점 수
-const licActive = (u) => !!u && (isAdmin(u) || Number(u.license_until) > Date.now());
-const shopLimit = (u) => (isAdmin(u) ? Infinity : Math.max(0, (licActive(u) ? LIC_SHOPS : FREE_SHOPS) + Number(u.extra_shops || 0))); // 운영자가 사람마다 조절 (/admin)
+// 요금제: license_until = Pro 만료일(예전 이용권은 모두 Pro) · plus_until = Plus 만료일 · sub_plan = 자동 연장(구독) 중인 요금제
+const PLAN_RANK = { lite: 0, plus: 1, pro: 2 };
+const PLAN_NAME = { lite: 'Lite', plus: 'Plus', pro: 'Pro' };
+const PLAN_SHOPS = { lite: FREE_SHOPS, plus: 4, pro: 5 };
+const PLANS = { plus: { price: 3000, days: 30 }, pro: { price: 5000, days: 30 } };
+const SUB_SQL = 'alter table users add column if not exists plus_until bigint; alter table users add column if not exists sub_plan text;';
+const planOf = (u) => (!u ? 'lite' : isAdmin(u) ? 'pro' : Number(u.license_until) > Date.now() ? 'pro' : Number(u.plus_until) > Date.now() ? 'plus' : 'lite');
+const licActive = (u) => planOf(u) !== 'lite'; // Plus 이상
+const shopLimit = (u) => (isAdmin(u) ? Infinity : Math.max(0, PLAN_SHOPS[planOf(u)] + Number(u.extra_shops || 0))); // 운영자가 사람마다 조절 (/admin) // 운영자가 사람마다 조절 (/admin)
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 const SEL_STYLE = 'width:100%;padding:12px;border:1px solid #d9dce1;border-radius:10px;font-size:15px;margin:4px 0 10px';
 const badgeHtml = (name) => `<span style="display:inline-block;padding:3px 10px;border-radius:999px;background:#eef0ff;color:#4338ca;font-size:13px;margin:2px">${esc(name)}</span>`;
@@ -1077,13 +1089,13 @@ async function notifyAdmins(text, url) {
 }
 // 답변이 달리면 문의한 사람에게 푸시
 const notifyReplied = (q, reply, from) => pushToUser(q.user_id, { title: `${from} 답변이 도착했어요`, body: reply.slice(0, 100), url: q.shop ? `/s/${q.shop}/inquiry` : '/inquiry' }).catch((e) => console.error('답변 알림 실패', e.message));
-const newLicenseKey = () => { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let t = ''; for (const x of crypto.randomBytes(16)) t += A[x % 32]; return `LK-${t.slice(0, 4)}-${t.slice(4, 8)}-${t.slice(8, 12)}-${t.slice(12, 16)}`; };
+const newLicenseKey = (plan = 'pro') => { const A = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let t = ''; for (const x of crypto.randomBytes(16)) t += A[x % 32]; return `${plan === 'plus' ? 'LP' : 'LK'}-${t.slice(0, 4)}-${t.slice(4, 8)}-${t.slice(8, 12)}-${t.slice(12, 16)}`; };
 const NO_LICENSE_MSG = '이용할 수 없어요'; // 지금은 쓰지 않음 (판매·충전은 무료)
 const licenseOk = async () => true; // 판매·구매·충전 신청은 모두 무료. 라이센스 키는 '자동 충전'(autoAllowed)에서만 확인해요
 // ---------- 포인트 충전 확인 방식 (수동 / 자동) ----------
 // 자동 = 은행 입금 알림(문자 또는 앱 푸시)을 /sms/<토큰> 으로 전달받아 입금자명·금액이 맞으면 포인트를 바로 지급. 라이센스 키가 있는 상점만 쓸 수 있음 (나머지 기능은 모두 무료)
 const PAYMODE_SQL = 'alter table shops add column if not exists pay_mode text; alter table shops add column if not exists sms_token text;';
-const autoAllowed = async (shop) => { if (!shop || !shop.owner) return false; const o = await store.userById(shop.owner); return !!o && (isAdmin(o) || Number(o.license_until) > Date.now()); };
+const autoAllowed = async (shop) => { if (!shop || !shop.owner) return false; const o = await store.userById(shop.owner); return !!o && planOf(o) === 'pro'; }; // 자동 충전은 Pro
 const smsSeen = new Map(); // 같은 문자가 재전송돼 두 번 처리되는 것 방지 (2분)
 const licTries = new Map(); // 키 무작위 대입 방지: 회원별 10분에 10번까지
 const parseBlocked = (shop) => { try { const a = JSON.parse((shop && shop.blocked) || '[]'); return Array.isArray(a) ? a.filter((x) => typeof x === 'string') : []; } catch { return []; } };
@@ -1097,17 +1109,19 @@ const discPrice = (price, disc) => Math.floor(Number(price) * (100 - disc) / 100
 // 저장: shops.opts (JSON 글자) 한 칸 + items.show_at/open_at/close_at. 처음 한 번 아래 SQL을 Supabase에서 실행해 주세요 (db.json 파일 저장소는 필요 없음)
 const OPTS_SQL = 'alter table shops add column if not exists opts text; alter table items add column if not exists show_at bigint; alter table items add column if not exists open_at bigint; alter table items add column if not exists close_at bigint;';
 const shopOpts = (shop) => { try { const o = JSON.parse((shop && shop.opts) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; } };
-const proOk = (shop) => autoAllowed(shop); // 상점 주인이 라이센스(이용권)를 쓰는 중인가
+const shopPlanOf = async (shop) => { if (!shop || !shop.owner) return 'lite'; try { return planOf(await store.userById(shop.owner)); } catch { return 'lite'; } };
+const proOk = async (shop) => (await shopPlanOf(shop)) !== 'lite'; // Plus 이상: 예약·쿠폰·통계·꾸미기
+const proOnly = async (shop) => (await shopPlanOf(shop)) === 'pro'; // Pro 전용: 직원·전용 주소·뱃지·자동 차단·자동 충전
 const isStaff = (shop, uid) => !!uid && (shopOpts(shop).staff || []).some((x) => x && x.id === uid);
 const MAX_STAFF = 5; const MAX_COUPONS = 20;
 async function saveOpts(shop, o) { const j = JSON.stringify(o); await store.updateShop(shop.id, { opts: j }); shop.opts = j; }
 const optsSqlPage = (shop, e) => { console.error('라이센스 설정 저장 실패 (opts 칸이 있나요?)', e && e.message); return page('저장 실패', `<h1>저장하지 못했어요</h1><p class="warn">데이터베이스에 라이센스 혜택용 칸이 아직 없는 것 같아요. Supabase SQL Editor에서 <code>${OPTS_SQL}</code> 를 한 번 실행한 뒤 다시 저장해 주세요.</p><p><a href="/m/${shop.key}#pro">← 상점 관리로</a></p>`); };
-const needProPage = (shop) => page('라이센스 필요', `<h1>라이센스가 필요한 기능이에요</h1><p class="sub">상점 주인이 라이센스 키를 등록해야 쓸 수 있어요. (내 상점 목록에서 등록)</p><p><a href="/m/${shop.key}">← 상점 관리로</a></p>`);
+const needProPage = (shop) => page('요금제 필요', `<h1>요금제가 필요한 기능이에요</h1><p class="sub">상점 주인이 Plus 이상(기능에 따라 Pro)을 쓰면 쓸 수 있어요. (내 상점 화면에서 구독하거나 키 등록)</p><p><a href="/m/${shop.key}">← 상점 관리로</a></p>`);
 
 // 상점을 불러올 때 주인의 라이센스 여부(_pro)를 붙여요 (opts가 있는 상점만 조회)
 async function withPro(s) {
   if (s && s.opts && s.owner) {
-    try { const o = await store.userById(s.owner); Object.defineProperty(s, '_pro', { value: !!o && licActive(o), writable: true, configurable: true, enumerable: false }); } catch {}
+    try { const o = await store.userById(s.owner), pl = planOf(o); Object.defineProperty(s, '_plan', { value: pl, writable: true, configurable: true, enumerable: false }); Object.defineProperty(s, '_pro', { value: pl !== 'lite', writable: true, configurable: true, enumerable: false }); } catch {}
   }
   return s;
 }
@@ -1126,7 +1140,7 @@ const themeCss = (shop) => {
   if (HEX_RE.test(t.color || '')) { const k = t.color, fg = textOn(k); c = `.nv.on{background:${k};color:${fg};box-shadow:0 10px 22px ${k}55}.bb:not([disabled]){background:${k};color:${fg}}.chip{background:${k};color:${fg}}.top{border-bottom:2px solid ${k}}`; }
   return `<style>${PRO_CSS}${c}</style>`;
 };
-const proBadge = (shop) => (shop && shop._pro && shopOpts(shop).badge !== false ? '<span class="pro">PRO</span>' : '');
+const proBadge = (shop) => (shop && shop._plan === 'pro' && shopOpts(shop).badge !== false ? '<span class="pro">PRO</span>' : '');
 const imgOf = (shop, kind) => { const v = (shopOpts(shop).theme || {})[kind]; return typeof v === 'string' && v.startsWith('data:image/') ? v : ''; };
 const imgVer = (shop) => Number((shopOpts(shop).theme || {}).v) || 0;
 const logoImg = (shop) => (shop && shop._pro && imgOf(shop, 'logo') ? `<img class="tlogo" src="/shop-img/${shop.id}/logo?v=${imgVer(shop)}" alt="">` : '');
@@ -1187,10 +1201,10 @@ async function couponUse(shop, uid, code) {
 
 // ----- 운영 도구: 어뷰징 자동 차단 (켜 둔 상점만) -----
 const abuseMap = new Map();
-const ABUSE_RULES = { charge: [6, '충전 신청을 1시간에 6번 넘게 보냈어요'], coupon: [8, '쿠폰 코드를 1시간에 8번 넘게 틀렸어요'], cancel: [6, '충전·예약을 1시간에 6번 넘게 취소했어요'] };
+const ABUSE_RULES = { coupon: [10, '쿠폰 코드를 1시간에 10번 넘게 틀렸어요'], cancel: [10, '충전·예약을 1시간에 10번 넘게 취소하거나 거절당했어요'] };
 async function abuseHit(shop, uid, kind) {
   try {
-    if (!shop || !uid || !shopOpts(shop).autoBlock || !(await proOk(shop))) return false;
+    if (!shop || !uid || !shopOpts(shop).autoBlock || !(await proOnly(shop))) return false;
     if (uid === shop.owner || isStaff(shop, uid)) return false;
     const target = await store.userById(uid); if (!target || isAdmin(target)) return false;
     const k = shop.id + '|' + uid + '|' + kind, now = Date.now();
@@ -1247,14 +1261,14 @@ function salesDashboard(orders, items) {
 // ----- 관리 화면의 라이센스 탭 2개 (매출 통계 · 라이센스 혜택) -----
 async function proTabsHtml(shop, ctx) {
   const { ownerU, items, orders, ownerView } = ctx;
-  const pro = !!(ownerU && (isAdmin(ownerU) || Number(ownerU.license_until) > Date.now()));
+  const plan = planOf(ownerU), pro = plan !== 'lite', isPro = plan === 'pro', cap = isPro ? 20 : 10;
   const o = shopOpts(shop), t = o.theme || {};
-  const lock = '<div class="card"><b>🔒 라이센스가 필요해요</b><p class="sub">상점 주인이 라이센스 키를 등록하면 쓸 수 있어요. 내 상점 목록에서 등록해요.</p></div>';
+  const lock = '<div class="card"><b>🔒 Plus 이상이 필요해요</b><p class="sub">상점 주인이 Plus나 Pro를 쓰면 쓸 수 있어요. 내 상점 화면에서 구독하거나 키를 등록해요.</p></div>';
   const stats = `<!--TAB:pstats::매출 통계-->
 <h2>매출 통계 대시보드</h2>
 ${pro ? salesDashboard(orders, items) : lock}`;
   if (!pro) return stats + `<!--TAB:pro::라이센스 혜택-->
-<h2>라이센스 혜택</h2>${lock}<div class="card"><p class="sub" style="margin:0">운영 도구(매출 통계, 쿠폰, 자동 차단, 직원 계정) · 꾸미기(테마 색상, 배너, 로고, 전용 주소, PRO 뱃지) · 상점 ${LIC_SHOPS}개 · 예약 판매·공개 · 만료 임박 알림</p></div>`;
+<h2>라이센스 혜택</h2>${lock}<div class="card"><p class="sub" style="margin:0">Plus: 매출 통계, 쿠폰 10개, 테마 색상·로고·배너, 예약 판매·공개, 상점 4개, 만료 임박 알림 · Pro: 쿠폰 20개, 직원 계정, 전용 주소·PRO 뱃지, 어뷰징 자동 차단, 자동 충전, 상점 5개</p></div>`;
   const coupons = couponList(shop), staff = o.staff || [], blog = o.blog || [];
   const cpLine = (c) => `<div class="card tcard"><b style="font-size:16px;user-select:all">${esc(c.code)}</b> <span class="price">${c.type === 'won' ? won(c.val) + ' 할인' : c.val + '% 할인'}</span><br><span class="sub">사용 ${(c.used || []).length}${c.max ? '/' + c.max : ''}회${c.exp ? ' · ' + fmtDay(c.exp) + '까지' : ''}</span><form method="post" action="/m/${shop.key}/coupons/delete" onsubmit="return confirm('이 쿠폰을 삭제할까요?')"><input type="hidden" name="code" value="${esc(c.code)}"><button style="background:#dc2626">삭제</button></form></div>`;
   const design = ownerView ? `<h2>상점 꾸미기</h2>
@@ -1267,29 +1281,30 @@ ${imgOf(shop, 'banner') ? '<label style="display:flex;gap:8px;align-items:center
 <b style="font-size:14px;display:block;margin-top:10px">로고 (정사각형)</b>
 <img id="logop" ${imgOf(shop, 'logo') ? `src="/shop-img/${shop.id}/logo?v=${imgVer(shop)}"` : ''} alt="" style="${imgOf(shop, 'logo') ? 'display:block;' : 'display:none;'}width:72px;height:72px;object-fit:cover;border-radius:16px;margin:8px 0"><input type="file" id="logof" accept="image/*"><input type="hidden" name="logo" id="logov">
 ${imgOf(shop, 'logo') ? '<label style="display:flex;gap:8px;align-items:center;margin:6px 0"><input type="checkbox" name="del_logo" style="width:auto;margin:0"> 현재 로고 삭제</label>' : ''}
-<b style="font-size:14px;display:block;margin-top:10px">전용 주소</b>
+${isPro ? `<b style="font-size:14px;display:block;margin-top:10px">전용 주소</b>
 <input name="slug" value="${esc(o.slug || '')}" placeholder="예) mystore (영문 소문자·숫자·-, 3~20자)" maxlength="20" autocomplete="off" autocapitalize="off">
 <p class="sub" style="margin:0 0 10px">${o.slug ? `내 전용 주소: <code>${BASE}/@${esc(o.slug)}</code>` : '비우면 전용 주소를 쓰지 않아요'}</p>
 <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" name="badge" ${o.badge === false ? '' : 'checked'} style="width:auto;margin:0"> PRO 뱃지 표시 (상점 이름 옆)</label>
+` : '<p class="sub">🔒 전용 주소와 PRO 뱃지는 Pro에서 쓸 수 있어요.</p>'}
 <button>꾸미기 저장</button></form>${imgPick('banner', 1200, 400, 0.7)}${imgPick('logo', 256, 256, 0.8)}
-<h2>직원 계정 (${staff.length}/${MAX_STAFF})</h2>
+${isPro ? `<h2>직원 계정 (${staff.length}/${MAX_STAFF})</h2>
 <form class="card row" method="post" action="/m/${shop.key}/staff"><input name="code" placeholder="직원으로 추가할 회원번호 8자리" required minlength="8" maxlength="12"><button>추가</button></form>
-${staff.map((x) => `<form class="card" method="post" action="/m/${shop.key}/staff/remove" onsubmit="return confirm('직원에서 뺄까요?')" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span>회원 ${esc(String(x.id).slice(0, 8))}${x.name ? ' (' + esc(x.name) + ')' : ''}</span><input type="hidden" name="uid" value="${esc(x.id)}"><button style="width:auto;background:#6b7280">빼기</button></form>`).join('') || '<p class="sub">직원이 없어요. 직원은 상품·주문·충전 승인·문의 같은 운영을 도울 수 있고, 이름·계좌·알림·꾸미기·직원 관리는 주인만 바꿀 수 있어요.</p>'}` : '<p class="sub">꾸미기·직원 관리는 상점 주인만 바꿀 수 있어요.</p>';
+${staff.map((x) => `<form class="card" method="post" action="/m/${shop.key}/staff/remove" onsubmit="return confirm('직원에서 뺄까요?')" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span>회원 ${esc(String(x.id).slice(0, 8))}${x.name ? ' (' + esc(x.name) + ')' : ''}</span><input type="hidden" name="uid" value="${esc(x.id)}"><button style="width:auto;background:#6b7280">빼기</button></form>`).join('') || '<p class="sub">직원이 없어요. 직원은 상품·주문·충전 승인·문의 같은 운영을 도울 수 있고, 이름·계좌·알림·꾸미기·직원 관리는 주인만 바꿀 수 있어요.</p>'}` : '<p class="sub">🔒 직원 계정은 Pro에서 쓸 수 있어요.</p>'}` : '<p class="sub">꾸미기·직원 관리는 상점 주인만 바꿀 수 있어요.</p>';
   return stats + `<!--TAB:pro::라이센스 혜택-->
 <h2>라이센스 혜택</h2>
-<div class="card"><b>✨ 라이센스 적용 중</b><p class="sub" style="margin:6px 0 0">${isAdmin(ownerU) ? '운영자 상점이에요' : `${fmtDay(ownerU.license_until)}까지`} · 상점 ${LIC_SHOPS}개 · 예약 판매·공개(상품 등록·수정에서 설정) · 만료 임박 알림(7일·3일·1일 전)</p></div>
+<div class="card"><b>✨ ${PLAN_NAME[plan]} 적용 중</b><p class="sub" style="margin:6px 0 0">${isAdmin(ownerU) ? '운영자 상점이에요' : `${fmtDay(isPro ? ownerU.license_until : ownerU.plus_until)}까지`} · 상점 ${PLAN_SHOPS[plan]}개 · 예약 판매·공개(상품 등록·수정에서 설정) · 만료 임박 알림(7일·3일·1일 전)</p></div>
 ${design}
-<h2>쿠폰 (${coupons.length}/${MAX_COUPONS})</h2>
+<h2>쿠폰 (${coupons.length}/${cap})</h2>
 <form class="card" method="post" action="/m/${shop.key}/coupons">
 <input name="code" placeholder="쿠폰 코드 (영문 대문자·숫자 4~20자)" required maxlength="20" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
 <div class="row"><select name="type" style="${SEL_STYLE}"><option value="pct">% 할인</option><option value="won">원 할인</option></select><input name="val" type="number" inputmode="numeric" min="1" placeholder="할인 값 (예: 10 또는 1000)" required></div>
 <div class="row"><input name="max" type="number" inputmode="numeric" min="0" placeholder="총 사용 횟수 (비우면 무제한)"><input name="days" type="number" inputmode="numeric" min="0" placeholder="유효 일수 (비우면 무제한)"></div>
 <button>쿠폰 만들기</button><p class="sub">구매할 때 쿠폰 코드를 넣으면 적용돼요. 1인 1회, 쿠폰으로는 최대 90%까지만 깎여요. (칭호 할인과 같이 쓸 수 있어요)</p></form>
 ${coupons.map(cpLine).join('') || '<p class="sub"><i class="empty">쿠폰이 없어요</i></p>'}
-<h2>어뷰징 자동 차단</h2>
+${isPro ? `<h2>어뷰징 자동 차단</h2>
 <form class="card" method="post" action="/m/${shop.key}/autoblock"><b>${o.autoBlock ? '켜져 있어요' : '꺼져 있어요'}</b>
-<p class="sub">1시간 안에 충전 신청 6번 초과 · 쿠폰 코드 8번 초과로 틀림 · 충전·예약 6번 초과 취소하면 그 회원을 자동으로 차단하고 알림을 보내요. 주인·직원·운영자는 대상이 아니에요. (서버가 다시 켜지면 횟수는 처음부터 세요)</p>
-<input type="hidden" name="on" value="${o.autoBlock ? '0' : '1'}"><button${o.autoBlock ? ' style="background:#6b7280"' : ''}>${o.autoBlock ? '끄기' : '켜기'}</button></form>
+<p class="sub">1시간 안에 충전·예약을 10번 넘게 취소하거나 거절당하거나, 쿠폰 코드를 10번 넘게 틀리면 그 회원을 자동으로 차단하고 알림을 보내요. 입금이 확인된 충전은 세지 않아서 많이 충전해도 괜찮아요. 주인·직원·운영자는 대상이 아니에요. (서버가 다시 켜지면 횟수는 처음부터 세요)</p>
+<input type="hidden" name="on" value="${o.autoBlock ? '0' : '1'}"><button${o.autoBlock ? ' style="background:#6b7280"' : ''}>${o.autoBlock ? '끄기' : '켜기'}</button></form>` : '<h2>어뷰징 자동 차단</h2><p class="sub">🔒 Pro에서 쓸 수 있어요.</p>'}
 ${blog.length ? `<div class="card"><b>자동 차단 기록</b>${blog.map((x) => `<div style="padding:7px 0;border-bottom:1px solid #eee;font-size:14px">회원 ${esc(String(x.uid).slice(0, 8))} · ${esc(x.why)}<br><span class="sub">${fmtDate(x.t)}</span></div>`).join('')}<p class="sub" style="margin:8px 0 0">잘못 차단됐다면 <b>차단</b> 탭에서 풀어 주세요.</p></div>` : ''}`;
 }
 
@@ -1297,15 +1312,18 @@ ${blog.length ? `<div class="card"><b>자동 차단 기록</b>${blog.map((x) => 
 const licWarned = new Map();
 async function licExpiryJob() {
   const now = Date.now();
-  const list = await store.usersLicenseExpiring(now, now + 7 * DAY);
-  for (const u of list) {
-    const days = Math.ceil((Number(u.license_until) - now) / DAY);
-    if (days !== 7 && days !== 3 && days !== 1) continue;
-    const k = u.id + '|' + u.license_until + '|' + days;
-    if (licWarned.has(k)) continue;
-    licWarned.set(k, 1);
-    const body = days === 1 ? '라이센스가 1일 안에 만료돼요. 만료되면 자동 충전과 라이센스 혜택이 멈춰요. 키를 등록해 연장하세요.' : `라이센스가 ${days}일 뒤 만료돼요. 키를 등록해 연장하세요.`;
-    await pushToUser(u.id, { title: '라이센스 만료 임박', body, url: '/my' }).catch((e) => console.error('만료 알림 실패', e.message));
+  for (const u of await store.usersLicenseExpiring(now, now + 7 * DAY)) {
+    for (const [plan, fld] of [['pro', 'license_until'], ['plus', 'plus_until']]) {
+      const t = Number(u[fld]) || 0;
+      if (t <= now || t >= now + 7 * DAY || u.sub_plan === plan) continue; // 자동 연장 중이면 알리지 않아요
+      const days = Math.ceil((t - now) / DAY);
+      if (days !== 7 && days !== 3 && days !== 1) continue;
+      const k = `${u.id}|${plan}|${t}|${days}`;
+      if (licWarned.has(k)) continue;
+      licWarned.set(k, 1);
+      const body = days === 1 ? `${PLAN_NAME[plan]}가 1일 안에 만료돼요. 만료되면 ${PLAN_NAME[plan]} 혜택이 멈춰요. 구독하거나 키를 등록해 연장하세요.` : `${PLAN_NAME[plan]}가 ${days}일 뒤 만료돼요. 구독하거나 키를 등록해 연장하세요.`;
+      await pushToUser(u.id, { title: '요금제 만료 임박', body, url: '/my' }).catch((e) => console.error('만료 알림 실패', e.message));
+    }
   }
   if (licWarned.size > 5000) licWarned.clear();
 }
@@ -1318,7 +1336,7 @@ async function manageShop(req, res, key, ownerOnly = false) {
   if (shop.deleted) { notFound(res, '삭제된 상점이에요'); return null; }
   if (!shop.owner) { redirect(res, '/claim/' + shop.key); return null; }
   if (u.id !== shop.owner) {
-    if (!ownerOnly && isStaff(shop, u.id) && await proOk(shop)) return shop; // 직원 계정 (라이센스)
+    if (!ownerOnly && isStaff(shop, u.id) && await proOnly(shop)) return shop; // 직원 계정 (Pro)
     send(res, 403, page('권한 없음', ownerOnly && isStaff(shop, u.id) ? '<h1>이 작업은 상점 주인만 할 수 있어요</h1>' : '<h1>이 상점의 주인이 아니에요</h1>')); return null;
   }
   return shop;
@@ -1363,16 +1381,61 @@ const buyLocks = new Set(); // 같은 사람이 같은 상품을 동시에 두 �
 // 주문 생성 + 재고형 아이템이면 한 줄을 꺼내 구매자에게 지급
 // ---------- 자동 발급 라이센스 상품: 사면 그 자리에서 자동 충전 키를 만들어 지급 ----------
 // 상품 '잠금 정보' 칸에 [[LICENSE:일수]] 가 들어 있으면 그 상품은 구매할 때마다 새 키를 만들어줘요 (재고 필요 없음)
-const itemLicDays = (item) => { const m = /^\[\[LICENSE:(\d{1,5})\]\]$/.exec(String((item && item.secret) || '').trim()); const d = m ? parseInt(m[1], 10) : 0; return d >= 1 && d <= 36500 ? d : 0; };
+const itemLicDays = (item) => { const m = /^\[\[LICENSE:(\d{1,5})(?::(?:PLUS|PRO))?\]\]$/i.exec(String((item && item.secret) || '').trim()); const d = m ? parseInt(m[1], 10) : 0; return d >= 1 && d <= 36500 ? d : 0; };
+const itemLicPlan = (item) => (/^\[\[LICENSE:\d{1,5}:PLUS\]\]$/i.test(String((item && item.secret) || '').trim()) ? 'plus' : 'pro'); // [[LICENSE:30:PLUS]] = Plus, 그 외는 Pro
 // 키를 공짜로 찍어내는 건 운영자만: 운영자 계정이 주인인 상점의 상품일 때만 발급해요
 const licShopOk = async (shop) => { if (!shop || !shop.owner) return false; const o = await store.userById(shop.owner); return !!o && isAdmin(o); };
 async function mintKeys(item, n) {
   const keys = [];
-  try { for (let i = 0; i < n; i++) { const key = newLicenseKey(); await store.createLicense({ key, days: itemLicDays(item), created: Date.now(), note: ('자동발급: ' + item.title).slice(0, 40) }); keys.push(key); } }
+  try { for (let i = 0; i < n; i++) { const key = newLicenseKey(itemLicPlan(item)); await store.createLicense({ key, days: itemLicDays(item), created: Date.now(), note: ('자동발급: ' + item.title).slice(0, 40) }); keys.push(key); } }
   catch (e) { await dropKeys(keys); throw e; }
   return keys;
 }
 async function dropKeys(keys) { for (const k of keys || []) { try { await store.deleteUnusedLicense(k); } catch (e) { console.error('키 회수 실패', k, e.message); } } }
+// ---------- 구독: 키 판매소 포인트로 Plus/Pro를 사고, 만료 하루 전에 자동 연장 (포인트가 모자라면 자동 해지) ----------
+let ksCache = { t: 0, shop: null };
+async function keyShop() { // 키를 파는 운영자 상점 (KEYSHOP_ID로 직접 지정할 수도 있어요)
+  if (Date.now() - ksCache.t < 300000) return ksCache.shop;
+  let found = null;
+  try {
+    if (process.env.KEYSHOP_ID) found = await store.shopById(process.env.KEYSHOP_ID);
+    else for (const sh of (await store.allShops()).filter((x) => !x.deleted)) { if (!(await licShopOk(sh))) continue; if ((await store.itemsByShop(sh.id)).some((i) => itemLicDays(i))) { found = sh; break; } }
+  } catch (e) { console.error('키 판매소 찾기 실패', e.message); }
+  ksCache = { t: Date.now(), shop: found };
+  return found;
+}
+async function initProOpts(uid) { try { for (const sh of (await store.shopsByOwner(uid)).filter((x) => !x.deleted)) { if (!sh.opts) await saveOpts(sh, { badge: true }); } } catch (e) { console.error('PRO 설정 만들기 실패 (opts 칸이 있나요?)', e.message); } }
+// 키 판매소 포인트에서 요금을 빼고 기간을 늘려요. 성공 { until } · 실패 { err, short? }
+async function chargeSub(u, plan) {
+  const P = PLANS[plan]; if (!P) return { err: '알 수 없는 요금제예요' };
+  const ks = await keyShop(); if (!ks) return { err: '키 판매소를 찾을 수 없어요. 운영자에게 문의해 주세요' };
+  const bal = await store.addShopPoints(u.id, ks.id, -P.price);
+  if (bal == null) return { err: `키 판매소 포인트가 부족해요 (${won(P.price)} 필요)`, short: true };
+  const fld = plan === 'pro' ? 'license_until' : 'plus_until';
+  const until = Math.max(Date.now(), Number(u[fld]) || 0) + P.days * DAY;
+  try { await store.updateUser(u.id, { [fld]: until, sub_plan: plan }); }
+  catch (e) { await store.addShopPoints(u.id, ks.id, P.price); throw e; }
+  try { await store.addLedger({ id: rid(9), user_id: u.id, shop: ks.id, delta: -P.price, kind: 'sub', ref: plan, note: `${PLAN_NAME[plan]} 구독 ${P.days}일`, created: Date.now() }); } catch (e) { console.error('구독 내역 기록 실패', e.message); }
+  if (plan === 'pro') await initProOpts(u.id);
+  return { until };
+}
+const subLocks = new Set();
+async function subRenewJob() {
+  const now = Date.now();
+  for (const u of await store.usersWithSub()) {
+    const plan = u.sub_plan; if (!PLANS[plan]) continue;
+    const until = Number(u[plan === 'pro' ? 'license_until' : 'plus_until']) || 0;
+    if (until - now > DAY || subLocks.has(u.id)) continue; // 만료 하루 전부터 연장해요
+    subLocks.add(u.id);
+    try {
+      const r = await chargeSub(u, plan);
+      if (r.short) { await store.updateUser(u.id, { sub_plan: null }); await pushToUser(u.id, { title: '구독 자동 연장이 해지됐어요', body: `${r.err}. ${until > now ? fmtDay(until) + '까지는 계속 쓸 수 있어요.' : ''}`, url: '/my' }); }
+      else if (r.err) console.error('구독 연장 실패', u.id, r.err);
+      else await pushToUser(u.id, { title: `${PLAN_NAME[plan]} 구독이 연장됐어요`, body: `${won(PLANS[plan].price)}가 차감됐고 ${fmtDay(r.until)}까지 이용해요.`, url: '/my' });
+    } catch (e) { console.error('구독 연장 실패', u.id, e.message); }
+    finally { subLocks.delete(u.id); }
+  }
+}
 async function placeOrder(order, item) {
   let line = null;
   const licDays = itemLicDays(item);
@@ -1734,21 +1797,59 @@ route('GET', /^\/my$/, async (req, res) => {
   const limit = shopLimit(u);
   const atLimit = shops.length >= limit;
   const pendingReq = atLimit ? await store.shopRequestByUser(u.id) : null;
-  const licLeft = Number(u.license_until || 0) - Date.now();
   let staffShops = []; try { staffShops = (await store.shopsByStaff(u.id)).filter((x) => !x.deleted && x.owner !== u.id); } catch {}
   const siteN = await safeNotices(null);
+  const plan = planOf(u), admin = isAdmin(u);
+  let ks = null, ksBal = 0; try { ks = await keyShop(); if (ks) ksBal = await store.shopPoints(u.id, ks.id); } catch {}
+  const proLeft = Number(u.license_until) > Date.now(), plusLeft = Number(u.plus_until) > Date.now();
+  const planLine = plan === 'lite' ? '무료로 쓰는 중' : [proLeft ? `Pro ${fmtDay(u.license_until)}까지` : '', plusLeft ? `Plus ${fmtDay(u.plus_until)}까지${proLeft ? ' (Pro 뒤에 이어져요)' : ''}` : ''].filter(Boolean).join(' · ');
+  const subOn = PLANS[u.sub_plan] ? u.sub_plan : '';
+  const subForm = (p) => `<form method="post" action="/my/subscribe" onsubmit="return confirm('${PLAN_NAME[p]} 30일 구독을 시작할까요?\\n키 판매소 포인트 ${PLANS[p].price.toLocaleString('ko-KR')}P가 바로 차감되고, 만료 하루 전에 자동으로 연장돼요.\\n포인트가 모자라면 자동으로 해지돼요.')" style="margin:8px 0 0"><input type="hidden" name="plan" value="${p}"><button${p === 'pro' ? '' : ' style="background:#4b5563"'}>${PLAN_NAME[p]} 구독하기 · ${won(PLANS[p].price)} / 30일</button></form>`;
+  const planCard = admin ? '' : `<details class="card" id="plan" style="position:sticky;top:8px;z-index:5;box-shadow:0 8px 24px rgba(0,0,0,.14)"${q.get('open') || q.get('m') || q.get('e') ? ' open' : ''}>
+<summary style="cursor:pointer;list-style:none"><b>💎 내 요금제: ${PLAN_NAME[plan]}</b>${subOn ? ' <span class="sub">· 🔁 자동 연장 중</span>' : ''}<br><span class="sub">${esc(planLine)}</span> <b style="float:right">구독하러 가기 ▾</b></summary>
+<div style="margin-top:12px"><p class="sub" style="margin:0 0 4px">키 판매소 포인트 <b>${won(ksBal)}</b>${ks ? ` · <a href="/s/${ks.id}">포인트 충전하러 가기</a>` : ''}</p>
+${subOn ? `<p class="sub">🔁 <b>${PLAN_NAME[subOn]}</b> 자동 연장 켜짐 — 만료 하루 전에 ${won(PLANS[subOn].price)}가 키 판매소 포인트에서 차감돼요. 포인트가 모자라면 자동으로 해지돼요.</p><form method="post" action="/my/subscribe/off" onsubmit="return confirm('자동 연장을 끌까요? 이미 낸 기간은 끝까지 쓸 수 있어요.')"><button style="background:#6b7280">자동 연장 끄기</button></form><p class="sub" style="margin:10px 0 0">다른 요금제로 바꾸려면 아래에서 새로 구독해요.</p>` : ''}
+${subForm('plus')}${subForm('pro')}
+<p class="sub" style="margin:10px 0 0">구독하면 바로 포인트가 차감되고 30일이 더해져요. 기간이 남아 있으면 그 뒤에 이어져요. Plus는 상점 4개·쿠폰·통계·예약 판매·꾸미기, Pro는 거기에 상점 5개·직원·전용 주소·자동 충전·자동 차단이 더해져요.</p></div></details>`;
+  const keyCard = admin ? '' : `<form class="card" method="post" action="/my/license"><b>이용권 키 등록</b><p class="sub">키를 등록하면 Plus 또는 Pro 기간이 늘어나요. 모든 상점에 적용돼요. (LK = Pro · LP = Plus)</p><div class="row"><input name="key" placeholder="LK-XXXX-XXXX-XXXX-XXXX" required maxlength="40" autocapitalize="characters" autocomplete="off"><button>등록</button></div></form>`;
   send(res, 200, page('내 상점', `<h1>내 상점</h1><p class="sub">${esc(u.email)} · <a href="/account">비밀번호 변경</a></p>
-${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
-${noticeBlock(siteN, '운영자 공지')}<div class="card"><a href="/wallet">내 포인트 · 칭호</a> <a href="/inquiry">운영자 문의</a>${isAdmin(u) ? ' <a href="/admin">관리자</a>' : ''}</div>
-${isAdmin(u) ? '' : `<form class="card" method="post" action="/my/license"><b>라이센스 이용권</b><p class="sub">${licLeft > 0 ? `${Math.ceil(licLeft / 86400000)}일 남음 (${fmtDay(u.license_until)}까지)${licLeft <= 7 * DAY ? ' <b style="color:#dc2626">· 곧 만료돼요. 키를 또 등록하면 연장돼요</b>' : ''}` : '이용권이 없어요. 키를 등록하면 자동 충전, 운영 도구, 꾸미기, 상점 5개, 예약 판매·공개, 만료 임박 알림을 쓸 수 있어요. (나머지 기능은 모두 무료예요)'}</p><div class="row"><input name="key" placeholder="LK-XXXX-XXXX-XXXX-XXXX" required maxlength="40" autocapitalize="characters" autocomplete="off"><button>등록</button></div><p class="sub">모든 상점에 적용 · 키를 또 넣으면 기간이 늘어나요</p></form>`}
+${planCard}${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
+${noticeBlock(siteN, '운영자 공지')}<div class="card"><a href="/wallet">내 포인트 · 칭호</a> <a href="/inquiry">운영자 문의</a>${admin ? ' <a href="/admin">관리자</a>' : ''}</div>
 ${shops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 ${staffShops.length ? '<h2>직원으로 참여한 상점</h2>' + staffShops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') : ''}
-${atLimit ? `<div class="card"><b>상점은 ${limit}개까지 만들 수 있어요 (현재 ${shops.length}개)</b>${licActive(u) ? '' : `<p class="sub">라이센스를 등록하면 ${LIC_SHOPS}개까지 만들 수 있어요.</p>`}${pendingReq ? '<p class="warn">신청이 접수됐어요. 운영자가 승인하면 상점을 만들 수 있어요.</p>' : `<form method="post" action="/my/shop-request"><textarea name="note" placeholder="상점이 더 필요한 이유" required maxlength="300"></textarea><button>상점 추가 신청</button></form>`}</div>` : `<form class="card" method="post" action="/shops"><b>새 상점 만들기</b> <span class="sub">(${shops.length}/${Number.isFinite(limit) ? limit : '제한 없음'})</span><br>
+${atLimit ? `<div class="card"><b>상점은 ${limit}개까지 만들 수 있어요 (현재 ${shops.length}개)</b>${plan === 'pro' ? '' : `<p class="sub">Plus는 4개, Pro는 5개까지 만들 수 있어요.</p>`}${pendingReq ? '<p class="warn">신청이 접수됐어요. 운영자가 승인하면 상점을 만들 수 있어요.</p>' : `<form method="post" action="/my/shop-request"><textarea name="note" placeholder="상점이 더 필요한 이유" required maxlength="300"></textarea><button>상점 추가 신청</button></form>`}</div>` : `<form class="card" method="post" action="/shops"><b>새 상점 만들기</b> <span class="sub">(${shops.length}/${Number.isFinite(limit) ? limit : '제한 없음'})</span><br>
 <input name="name" placeholder="상점 이름" required maxlength="40">
 <input name="webhook" placeholder="디스코드 웹훅 URL (선택, 판매 알림용)">
 <button>상점 만들기</button></form>`}
 ${PUSH_CARD}
-<form method="post" action="/logout"><button style="background:#6b7280">로그아웃</button></form>`));
+<form method="post" action="/logout"><button style="background:#6b7280">로그아웃</button></form>
+${keyCard}`));
+});
+
+route('POST', /^\/my\/subscribe$/, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return redirect(res, '/login?next=/my');
+  const f = await readForm(req);
+  const fail = (t) => redirect(res, `/my?e=${enc(t)}`);
+  const plan = f.plan === 'pro' ? 'pro' : f.plan === 'plus' ? 'plus' : '';
+  if (!plan || isAdmin(u)) return fail('구독할 수 없어요');
+  if (subLocks.has(u.id)) return fail('처리 중이에요. 잠시 뒤에 다시 눌러 주세요');
+  subLocks.add(u.id);
+  try {
+    const r = await chargeSub(u, plan);
+    if (r.err) return fail(r.err);
+    redirect(res, `/my?m=${enc(`${PLAN_NAME[plan]} 구독이 시작됐어요 (${fmtDay(r.until)}까지). 만료 하루 전에 자동으로 연장돼요`)}`);
+  } catch (e) {
+    console.error('구독 실패 (users.plus_until / sub_plan 칸이 있나요?)', e.message);
+    send(res, 500, page('구독 실패', `<h1>구독하지 못했어요</h1><p class="warn">데이터베이스에 구독용 칸이 아직 없는 것 같아요. 운영자가 Supabase SQL Editor에서 <code>${SUB_SQL}</code> 를 한 번 실행해야 해요. (포인트는 돌려놨어요)</p><p><a href="/my">← 내 상점으로</a></p>`));
+  } finally { subLocks.delete(u.id); }
+});
+
+route('POST', /^\/my\/subscribe\/off$/, async (req, res) => {
+  const u = await currentUser(req);
+  if (!u) return redirect(res, '/login?next=/my');
+  try { await store.updateUser(u.id, { sub_plan: null }); } catch (e) { console.error(e.message); }
+  redirect(res, `/my?m=${enc('자동 연장을 껐어요. 이미 낸 기간은 끝까지 쓸 수 있어요')}`);
 });
 
 route('POST', /^\/my\/license$/, async (req, res) => {
@@ -1760,14 +1861,15 @@ route('POST', /^\/my\/license$/, async (req, res) => {
   if (Date.now() - tr.t > 600000) { tr.n = 0; tr.t = Date.now(); }
   if (tr.n >= 10) return fail('시도가 너무 많아요. 10분 뒤에 다시 해주세요');
   const raw = String(f.key || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const key = /^LK[A-Z0-9]{16}$/.test(raw) ? `LK-${raw.slice(2, 6)}-${raw.slice(6, 10)}-${raw.slice(10, 14)}-${raw.slice(14, 18)}` : '';
+  const key = /^L[KP][A-Z0-9]{16}$/.test(raw) ? `${raw.slice(0, 2)}-${raw.slice(2, 6)}-${raw.slice(6, 10)}-${raw.slice(10, 14)}-${raw.slice(14, 18)}` : '';
   const lic = key ? await store.claimLicense(key, u.id) : null;
   if (!lic) { tr.n++; licTries.set(u.id, tr); return fail('없거나 이미 사용된 키예요'); }
   try {
-    const until = Math.max(Date.now(), Number(u.license_until) || 0) + Number(lic.days) * 86400000;
-    await store.updateUser(u.id, { license_until: until });
-    try { for (const sh of (await store.shopsByOwner(u.id)).filter((x) => !x.deleted)) { if (!sh.opts) await saveOpts(sh, { badge: true }); } } catch (e) { console.error('PRO 설정 만들기 실패 (opts 칸이 있나요?)', e.message); }
-    redirect(res, `/my?m=${enc(`이용권이 등록됐어요 (${fmtDay(until)}까지)`)}`);
+    const plan = key.startsWith('LP') ? 'plus' : 'pro', fld = plan === 'pro' ? 'license_until' : 'plus_until';
+    const until = Math.max(Date.now(), Number(u[fld]) || 0) + Number(lic.days) * 86400000;
+    await store.updateUser(u.id, { [fld]: until });
+    if (plan === 'pro') await initProOpts(u.id);
+    redirect(res, `/my?m=${enc(`${PLAN_NAME[plan]} 이용권이 등록됐어요 (${fmtDay(until)}까지)`)}`);
   } catch (e) {
     try { await store.releaseLicense(key); } catch {}
     console.error('이용권 등록 실패', e.message);
@@ -1875,15 +1977,16 @@ route('GET', /^\/m\/([\w-]+)$/, async (req, res, m) => {
   const ownerU = shop.owner ? await store.userById(shop.owner) : null;
   const licLeftM = ownerU ? Number(ownerU.license_until || 0) - Date.now() : 0;
   const ownerView = !!me && (isAdmin(me) || me.id === shop.owner);
-  const licBanner = ownerU && !isAdmin(ownerU) && licLeftM > 0 && licLeftM <= 7 * DAY ? `<div class="warn">라이센스가 ${Math.ceil(licLeftM / DAY)}일 뒤 만료돼요. 내 상점 목록에서 키를 등록해 연장하세요.</div>` : '';
-  const autoOk = !!(ownerU && (isAdmin(ownerU) || licLeftM > 0)); // 자동 충전은 이용권이 있는 상점만
+  const endM = ownerU ? Math.max(Number(ownerU.license_until) || 0, Number(ownerU.plus_until) || 0) - Date.now() : 0;
+  const licBanner = ownerU && !isAdmin(ownerU) && endM > 0 && endM <= 7 * DAY && !ownerU.sub_plan ? `<div class="warn">요금제가 ${Math.ceil(endM / DAY)}일 뒤 만료돼요. 내 상점 화면에서 구독하거나 키를 등록해 연장하세요.</div>` : '';
+  const autoOk = !!(ownerU && planOf(ownerU) === 'pro'); // 자동 충전은 Pro인 상점만
   const autoOn = shop.pay_mode === 'auto' && autoOk;
   const smsUrl = shop.sms_token ? BASE + '/sms/' + shop.sms_token : '';
   const payModeBlock = `<h2>충전 확인 방식</h2>
 <form class="card" method="post" action="/m/${shop.key}/paymode">
 <label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 12px"><input type="radio" name="mode" value="manual"${autoOn ? '' : ' checked'} style="width:auto;margin:4px 0 0"><span><b>수동</b><br><span class="sub">입금을 직접 확인하고 아래 [입금 확인] 버튼을 눌러 포인트를 줘요</span></span></label>
 <label style="display:flex;gap:10px;align-items:flex-start;margin:0 0 12px${autoOk ? '' : ';opacity:.5'}"><input type="radio" name="mode" value="auto"${autoOn ? ' checked' : ''}${autoOk ? '' : ' disabled'} style="width:auto;margin:4px 0 0"><span><b>자동</b><br><span class="sub">입금 문자가 오면 입금자명·금액을 맞춰 보고 포인트를 바로 줘요</span></span></label>
-${autoOk ? '' : '<p class="warn">자동 충전은 라이센스 키를 등록한 상점만 쓸 수 있어요. (나머지 기능은 모두 무료예요) <a href="/my">내 상점에서 키 등록하기</a></p>'}
+${autoOk ? '' : '<p class="warn">자동 충전은 Pro에서 쓸 수 있어요. (나머지 기능은 Lite도 무료예요) <a href="/my">내 상점에서 구독하기</a></p>'}
 ${shop.pay_mode === 'auto' && !autoOk ? '<p class="warn">이용권이 끝나서 자동 확인이 멈춰 있어요. 키를 다시 등록하기 전까지는 직접 승인해 주세요.</p>' : ''}
 <button>저장</button></form>
 ${autoOn ? `<div class="card"><b>자동 충전 설정 방법</b>
@@ -2023,7 +2126,7 @@ ${ownerU && isAdmin(ownerU) ? '<input name="license_days" type="number" inputmod
 <textarea name="secret" placeholder="잠금 정보 (결제 후에만 공개: 내용, 링크 등). 재고를 쓰거나 키 자동 발급이면 비워도 돼요"></textarea>
 <textarea name="stock" placeholder="재고 (선택). 한 줄에 하나씩 적으면 구매할 때마다 한 줄씩 순서대로 지급돼요. 예) 치킨버거 ⏎ 불고기버거. 비우면 재고 제한 없이 같은 잠금 정보를 보여줘요"></textarea>
 <input name="buy_limit" type="number" inputmode="numeric" min="1" max="100000" placeholder="인당 구매 한도 (선택, 한 사람이 살 수 있는 최대 개수)">
-${schedFields(null, autoOk)}
+${schedFields(null, !!(ownerU && licActive(ownerU)))}
 ${imgField('')}
 ${titleSelect(titles, '')}
 <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" name="pub" checked style="width:auto;margin:0"> 상점 목록에 공개 (끄면 링크로만 열려요)</label>
@@ -2650,7 +2753,7 @@ route('GET', /^\/w\/([\w-]+)$/, async (req, res, m) => {
   const bal = await store.shopPoints(u.id, shop.id);
   const pending = (await store.userShopCharges(u.id, shop.id)).filter((c) => Date.now() <= c.created + CHARGE_TTL);
   const lq = (q.get('lq') || '').trim().slice(0, 30); // 내역 검색어
-  const label = { charge: '충전', buy: '구매', admin: '상점 조정', payback: '페이백', reserve: '예약 (선결제)', reserve_cancel: '예약 취소 (환불)' };
+  const label = { sub: '구독', charge: '충전', buy: '구매', admin: '상점 조정', payback: '페이백', reserve: '예약 (선결제)', reserve_cancel: '예약 취소 (환불)' };
   let log = await store.ledgerForUserShop(u.id, shop.id, lq ? 1000 : 30); // 검색할 땐 더 옛날 것까지 찾아봐요
   if (lq) { const w = lq.toLowerCase(); log = log.filter((l) => `${label[l.kind] || l.kind} ${l.note || ''} ${fmtDate(l.created)} ${Math.abs(Number(l.delta) || 0)} ${Number(l.delta) || 0}`.toLowerCase().includes(w)); }
   send(res, 200, page(shop.name + ' 포인트', `<a class="sub" href="/s/${shop.id}">← ${esc(shop.name)}</a><h1>${esc(shop.name)} 포인트</h1>
@@ -2690,7 +2793,6 @@ route('POST', /^\/w\/([\w-]+)\/charge$/, async (req, res, m) => {
   const chg = { token: rid(12), user_id: u.id, shop: shop.id, amount, name, status: 'waiting', created: Date.now() };
   const chImg = cleanImage(f.image); if (chImg) chg.image = chImg;
   await store.createCharge(chg);
-  abuseHit(shop, u.id, 'charge');
   await notify(shop, `⏳ 충전 신청: ${name} · ${won(amount)} — ${shop.pay_mode === 'auto' && (await autoAllowed(shop)) ? '입금 문자가 오면 자동으로 지급돼요' : '입금을 확인하고 관리 페이지에서 승인해 주세요'}`, 'charge', { name, price: won(amount), shop: shop.name });
   back('m', '충전 신청이 접수됐어요. 아래 계좌로 입금해 주세요');
 });
@@ -2708,7 +2810,7 @@ route('POST', /^\/m\/([\w-]+)\/charges\/([\w-]+)\/(confirm|reject)$/, async (req
   const shop = await manageShop(req, res, m[1]);
   if (!shop) return;
   const c = await store.chargeByToken(m[2]);
-  if (c && c.shop === shop.id) { if (m[3] === 'confirm') await confirmCharge(c); else await store.claimCharge(c.token, 'rejected'); }
+  if (c && c.shop === shop.id) { if (m[3] === 'confirm') await confirmCharge(c); else { await store.claimCharge(c.token, 'rejected'); abuseHit(shop, c.user_id, 'cancel'); } }
   redirect(res, `/m/${shop.key}`);
 });
 
@@ -2769,8 +2871,8 @@ route('POST', /^\/m\/([\w-]+)\/titles$/, async (req, res, m) => {
   const name = str(f.name, 20);
   const back = (msg) => send(res, 400, page('오류', `<h1>${esc(msg)}</h1><p><a href="/m/${shop.key}">돌아가기</a></p>`));
   if (!name) return back('칭호 이름을 적어주세요');
-  const TL = (await proOk(shop)) ? 30 : 10;
-  if ((await store.titlesByShop(shop.id)).length >= TL) return back(`칭호는 상점당 ${TL}개까지 만들 수 있어요${TL === 10 ? ' (라이센스가 있으면 30개)' : ''}`);
+  const TL = (await proOnly(shop)) ? 30 : 10;
+  if ((await store.titlesByShop(shop.id)).length >= TL) return back(`칭호는 상점당 ${TL}개까지 만들 수 있어요${TL === 10 ? ' (Pro는 30개)' : ''}`);
   const dsc = Math.max(0, Math.min(20, parseInt(f.discount, 10) || 0));
   const autoMin = Math.max(0, Math.min(100000000, parseInt(f.auto_min, 10) || 0));
   const pbk = Math.max(0, Math.min(20, parseInt(f.payback, 10) || 0));
@@ -2837,8 +2939,8 @@ ${shops.map((sh) => `<div class="card"><b>${esc(sh.name)}</b>${sh.deleted ? ' �
 ${sh.deleted ? `<form method="post" action="/admin/shops/${sh.id}/restore"><button style="background:#111111">복구</button></form><form method="post" action="/admin/shops/${sh.id}/purge" onsubmit="return confirm('${esc(sh.name).replace(/&#39;/g, '')} 상점을 영구 삭제할까요?\\n아이템·주문·후기·충전·포인트 기록이 모두 지워지고, 구매자도 구매한 내용을 다시 볼 수 없어요. 절대 되돌릴 수 없어요.')"><button style="background:#7f1d1d;margin-top:6px">영구 삭제</button></form>` : `<form method="post" action="/admin/shops/${sh.id}/delete" onsubmit="return confirm('이 상점을 삭제할까요? 사이트에서 사라지고 새 구매·충전이 막혀요. (복구할 수 있어요)')"><button style="background:#dc2626">상점 삭제</button></form>`}</div>`).join('') || `<p class="sub">${sq ? '검색 결과가 없어요' : '상점이 없어요'}</p>`}
 <!--TAB:keys::라이센스 키-->
 <h2>라이센스 키 (자동 충전 전용)</h2>
-<form class="card" method="post" action="/admin/licenses"><div class="row"><input name="days" type="number" inputmode="numeric" min="1" max="36500" placeholder="기간 (일)" required><input name="count" type="number" inputmode="numeric" min="1" max="20" value="1" style="max-width:80px;text-align:center"></div><input name="note" placeholder="메모 (선택, 예: 홍길동)" maxlength="40" style="margin-top:8px"><button style="margin-top:8px">키 발급</button><p class="sub">기간은 일 단위, 오른쪽 칸은 발급 개수(최대 20). 영구는 36500일.</p></form>
-${licenses.map((k) => `<div class="card tcard"><code style="font-size:14px;font-weight:700;user-select:all">${esc(k.key)}</code><br><span class="sub">${Number(k.days)}일${k.note ? ' · ' + esc(k.note) : ''} · ${k.used_by ? `사용됨 (회원번호 ${esc(String(k.used_by).slice(0, 8))} · ${fmtDay(k.used_at)})` : '미사용'}</span>${k.used_by ? '' : `<div class="acts"><button type="button" style="padding:10px;font-size:14px;border-radius:14px;background:#f4f4f5;color:#18181b" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(k.key)}');this.textContent='복사됨'">복사</button><form method="post" action="/admin/licenses/delete" onsubmit="return confirm('이 키를 삭제할까요?')"><input type="hidden" name="key" value="${esc(k.key)}"><button>삭제</button></form></div>`}</div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
+<form class="card" method="post" action="/admin/licenses"><select name="plan" style="${SEL_STYLE}margin-bottom:8px"><option value="pro">Pro 키 (LK)</option><option value="plus">Plus 키 (LP)</option></select><div class="row"><input name="days" type="number" inputmode="numeric" min="1" max="36500" placeholder="기간 (일)" required><input name="count" type="number" inputmode="numeric" min="1" max="20" value="1" style="max-width:80px;text-align:center"></div><input name="note" placeholder="메모 (선택, 예: 홍길동)" maxlength="40" style="margin-top:8px"><button style="margin-top:8px">키 발급</button><p class="sub">기간은 일 단위, 오른쪽 칸은 발급 개수(최대 20). 영구는 36500일.</p></form>
+${licenses.map((k) => `<div class="card tcard"><code style="font-size:14px;font-weight:700;user-select:all">${esc(k.key)}</code><br><span class="sub">${String(k.key).startsWith('LP') ? 'Plus' : 'Pro'} ${Number(k.days)}일${k.note ? ' · ' + esc(k.note) : ''} · ${k.used_by ? `사용됨 (회원번호 ${esc(String(k.used_by).slice(0, 8))} · ${fmtDay(k.used_at)})` : '미사용'}</span>${k.used_by ? '' : `<div class="acts"><button type="button" style="padding:10px;font-size:14px;border-radius:14px;background:#f4f4f5;color:#18181b" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(k.key)}');this.textContent='복사됨'">복사</button><form method="post" action="/admin/licenses/delete" onsubmit="return confirm('이 키를 삭제할까요?')"><input type="hidden" name="key" value="${esc(k.key)}"><button>삭제</button></form></div>`}</div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 <!--TAB:users::사용자-->
 <h2>사용자</h2>
 <form method="get" action="/admin" class="row"><input type="hidden" name="sq" value="${esc(sq)}"><input name="q" placeholder="이메일 검색" value="${esc(search)}"><button>검색</button></form>
@@ -2902,10 +3004,10 @@ route('POST', /^\/admin\/licenses$/, async (req, res) => {
   const days = parseInt(f.days, 10);
   const count = Math.max(1, Math.min(20, parseInt(f.count, 10) || 1));
   if (!(days >= 1 && days <= 36500)) return redirect(res, `/admin?e=${enc('기간은 1~36500일 사이로 넣어주세요')}`);
-  const note = str(f.note, 40);
+  const note = str(f.note, 40), plan = f.plan === 'plus' ? 'plus' : 'pro';
   const made = [];
-  for (let i = 0; i < count; i++) { const key = newLicenseKey(); await store.createLicense({ key, days, created: Date.now(), note }); made.push(key); }
-  redirect(res, `/admin?m=${enc(`${days}일 키 ${count}개 발급: ${made.join(' / ')}`)}`);
+  for (let i = 0; i < count; i++) { const key = newLicenseKey(plan); await store.createLicense({ key, days, created: Date.now(), note }); made.push(key); }
+  redirect(res, `/admin?m=${enc(`${PLAN_NAME[plan]} ${days}일 키 ${count}개 발급: ${made.join(' / ')}`)}`);
 });
 
 route('POST', /^\/admin\/licenses\/delete$/, async (req, res) => {
@@ -3444,6 +3546,7 @@ route('POST', /^\/m\/([\w-]+)\/design$/, async (req, res, m) => {
   const b = cleanShopImg(f.banner); if (b) t.banner = b; else if (f.del_banner === 'on') delete t.banner;
   const lg = cleanShopImg(f.logo); if (lg) t.logo = lg; else if (f.del_logo === 'on') delete t.logo;
   t.v = (Number(t.v) || 0) + 1;
+  if (await proOnly(shop)) { // 전용 주소·PRO 뱃지는 Pro
   const slug = str(f.slug, 20).toLowerCase();
   if (slug) {
     if (!SLUG_RE.test(slug)) return back('전용 주소는 영문 소문자·숫자·-로 3~20자(처음과 끝은 영문·숫자)여야 해요');
@@ -3453,6 +3556,7 @@ route('POST', /^\/m\/([\w-]+)\/design$/, async (req, res, m) => {
     o.slug = slug;
   } else delete o.slug;
   o.badge = f.badge === 'on';
+  }
   o.theme = t;
   try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
   redirect(res, `/m/${shop.key}#pro`);
@@ -3461,7 +3565,7 @@ route('POST', /^\/m\/([\w-]+)\/design$/, async (req, res, m) => {
 route('POST', /^\/m\/([\w-]+)\/staff$/, async (req, res, m) => {
   const shop = await manageShop(req, res, m[1], true);
   if (!shop) return;
-  if (!(await proOk(shop))) return send(res, 403, needProPage(shop));
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
   const f = await readForm(req);
   const back = (msg) => send(res, 400, page('오류', `<h1>${esc(msg)}</h1><p><a href="/m/${shop.key}#pro">돌아가기</a></p>`));
   const code = str(f.code, 12);
@@ -3504,7 +3608,8 @@ route('POST', /^\/m\/([\w-]+)\/coupons$/, async (req, res, m) => {
   const days = Math.max(0, Math.min(3650, parseInt(f.days, 10) || 0));
   const o = shopOpts(shop); const list = couponList(shop);
   if (list.some((c) => c.code === code)) return back('이미 있는 쿠폰 코드예요');
-  if (list.length >= MAX_COUPONS) return back(`쿠폰은 ${MAX_COUPONS}개까지 만들 수 있어요`);
+  const cap = (await proOnly(shop)) ? 20 : 10;
+  if (list.length >= cap) return back(`쿠폰은 ${cap}개까지 만들 수 있어요${cap === 10 ? ' (Pro는 20개)' : ''}`);
   list.push({ code, type, val, max, exp: days ? Date.now() + days * DAY : 0, used: [], created: Date.now() });
   o.coupons = list;
   try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
@@ -3523,7 +3628,7 @@ route('POST', /^\/m\/([\w-]+)\/coupons\/delete$/, async (req, res, m) => {
 route('POST', /^\/m\/([\w-]+)\/autoblock$/, async (req, res, m) => {
   const shop = await manageShop(req, res, m[1]);
   if (!shop) return;
-  if (!(await proOk(shop))) return send(res, 403, needProPage(shop));
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
   const f = await readForm(req);
   const o = shopOpts(shop); o.autoBlock = f.on === '1';
   try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
@@ -3540,7 +3645,7 @@ http.createServer(async (req, res) => {
   const sm = /^\/@([a-z0-9][a-z0-9-]{1,18}[a-z0-9])(\/.*)?$/.exec(url.pathname); // 전용 주소 (라이센스): /@이름 → 그 상점
   if (sm) {
     let sh = null; try { sh = await store.shopBySlug(sm[1]); } catch (e) { console.error(e.message); }
-    if (!sh || sh.deleted || !sh._pro) return notFound(res, '상점을 찾을 수 없어요');
+    if (!sh || sh.deleted || sh._plan !== 'pro') return notFound(res, '상점을 찾을 수 없어요');
     url.pathname = '/s/' + sh.id + (sm[2] || '');
   }
   if (!PUBLIC.some(([m, re]) => m === req.method && re.test(url.pathname))) {
@@ -3558,3 +3663,5 @@ http.createServer(async (req, res) => {
 }).listen(PORT, () => console.log(`링크몰 실행 중 → ${BASE} (저장소: ${useSB ? 'Supabase' : 'db.json 파일'})`));
 setTimeout(() => licExpiryJob().catch((e) => console.error('만료 알림 실패', e.message)), 60 * 1000);
 setInterval(() => licExpiryJob().catch((e) => console.error('만료 알림 실패', e.message)), 3600 * 1000);
+setTimeout(() => subRenewJob().catch((e) => console.error('구독 연장 작업 실패', e.message)), 90 * 1000);
+setInterval(() => subRenewJob().catch((e) => console.error('구독 연장 작업 실패', e.message)), 3600 * 1000);
