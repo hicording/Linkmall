@@ -620,7 +620,7 @@ const shopPage = (shop, title, body, me, bal, next, active = 'home', groups = []
 <a class="nv" href="/s/${shop.id}/inquiry">${ICO.chat}문의하기</a>
 ${groups.map((g, n) => `${n === 0 ? `<div class="sm" style="margin:30px 0 -22px 12px;font-size:13px">${esc(shop.name)}</div>` : ''}<h3${n ? ' style="margin-top:20px"' : ''}>${esc(g.name)}</h3>
 ${g.items.length ? g.items.map((i) => `<a class="nv${i.id === curId ? ' on' : ''}" href="/i/${i.id}">${ICO.cube}${esc(i.title)}</a>`).join('') : '<p class="sm" style="margin:0 0 0 14px"><i class="empty">비어 있어요</i></p>'}`).join('')}</nav>
-<div class="main">${body}</div><script>if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))</script></body></html>`;
+<div class="main">${noticeBanner(shop)}${body}</div><script>if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}))</script></body></html>`;
 
 // 상품 검색(상점 첫 화면): 입력하는 대로 바로 걸러 보여줘요
 const PRODUCT_SEARCH_BOX = `<div class="sb"><input id="ps" type="search" placeholder="상품 검색" autocomplete="off" enterkeyhint="search" aria-label="상품 검색"></div>`;
@@ -1107,13 +1107,32 @@ const discPrice = (price, disc) => Math.floor(Number(price) * (100 - disc) / 100
 
 // ---------- 라이센스 혜택: 운영 도구 · 꾸미기 · 예약 판매/공개 · 상점 5개 · 만료 임박 알림 ----------
 // 저장: shops.opts (JSON 글자) 한 칸 + items.show_at/open_at/close_at. 처음 한 번 아래 SQL을 Supabase에서 실행해 주세요 (db.json 파일 저장소는 필요 없음)
-const OPTS_SQL = 'alter table shops add column if not exists opts text; alter table items add column if not exists show_at bigint; alter table items add column if not exists open_at bigint; alter table items add column if not exists close_at bigint;';
+const OPTS_SQL = 'alter table shops add column if not exists opts text; alter table items add column if not exists show_at bigint; alter table items add column if not exists open_at bigint; alter table items add column if not exists close_at bigint; alter table items add column if not exists sale_price bigint; alter table items add column if not exists sale_from bigint; alter table items add column if not exists sale_until bigint; alter table items add column if not exists after_msg text;';
 const shopOpts = (shop) => { try { const o = JSON.parse((shop && shop.opts) || '{}'); return o && typeof o === 'object' && !Array.isArray(o) ? o : {}; } catch { return {}; } };
 const shopPlanOf = async (shop) => { if (!shop || !shop.owner) return 'lite'; try { return planOf(await store.userById(shop.owner)); } catch { return 'lite'; } };
 const proOk = async (shop) => (await shopPlanOf(shop)) !== 'lite'; // Plus 이상: 예약·쿠폰·통계·꾸미기
 const proOnly = async (shop) => (await shopPlanOf(shop)) === 'pro'; // Pro 전용: 직원·전용 주소·뱃지·자동 차단·자동 충전
 const isStaff = (shop, uid) => !!uid && (shopOpts(shop).staff || []).some((x) => x && x.id === uid);
 const MAX_STAFF = 5; const MAX_COUPONS = 20;
+// 직원 권한 (체크박스): 주인이 직원마다 골라서 줘요. 이름·계좌·알림·꾸미기·직원 관리는 항상 주인만
+const STAFF_PERMS = [
+  ['items', '상품 정보 수정·삭제'], ['stock', '재고·잠금 정보 보기·수정 (새 상품 등록 포함)'], ['orders', '판매내역·매출 통계 보기'], ['charges', '충전 승인·거절'],
+  ['points', '포인트 직접 조정 (⚠ 돈과 같은 포인트를 마음대로 줄 수 있어요)'], ['block', '회원 차단·해제'], ['inquiry', '문의 답변·후기 삭제'], ['shop', '카테고리·칭호·공지 관리'], ['promo', '쿠폰·자동 차단 설정'],
+];
+const STAFF_DEFAULT = ['items', 'orders', 'charges', 'block', 'inquiry', 'shop', 'promo']; // 재고 내용 열람과 포인트 조정은 기본으로 꺼져 있어요
+const staffEntry = (shop, uid) => (shopOpts(shop).staff || []).find((x) => x && x.id === uid);
+const staffPerms = (x) => (x && Array.isArray(x.perms) ? x.perms : STAFF_DEFAULT); // 권한 칸이 없는 예전 직원은 기본 권한
+const TAB_PERM = { inq: 'inquiry', notice: 'shop', cats: 'shop', titles: 'shop', blocks: 'block', items: 'items', orders: 'orders', pstats: 'orders', pro: 'promo' };
+function tabFilter(shop, body) { // 직원에게는 권한이 있는 탭만 보여요
+  if (!shop._perms) return body;
+  return body.split(/(?=<!--TAB:)/).filter((seg) => {
+    const id = (/^<!--TAB:([\w-]+):/.exec(seg) || [])[1];
+    if (!id || id === 'home') return true;
+    if (id === 'noti') return false;
+    if (id === 'money') return shop._perms.includes('charges') || shop._perms.includes('points');
+    return shop._perms.includes(TAB_PERM[id]);
+  }).join('');
+}
 async function saveOpts(shop, o) { const j = JSON.stringify(o); await store.updateShop(shop.id, { opts: j }); shop.opts = j; }
 const optsSqlPage = (shop, e) => { console.error('라이센스 설정 저장 실패 (opts 칸이 있나요?)', e && e.message); return page('저장 실패', `<h1>저장하지 못했어요</h1><p class="warn">데이터베이스에 라이센스 혜택용 칸이 아직 없는 것 같아요. Supabase SQL Editor에서 <code>${OPTS_SQL}</code> 를 한 번 실행한 뒤 다시 저장해 주세요.</p><p><a href="/m/${shop.key}#pro">← 상점 관리로</a></p>`); };
 const needProPage = (shop) => page('요금제 필요', `<h1>요금제가 필요한 기능이에요</h1><p class="sub">상점 주인이 Plus 이상(기능에 따라 Pro)을 쓰면 쓸 수 있어요. (내 상점 화면에서 구독하거나 키 등록)</p><p><a href="/m/${shop.key}">← 상점 관리로</a></p>`);
@@ -1164,7 +1183,7 @@ const schedFields = (item, pro) => pro ? `<input type="hidden" name="sched" valu
 <label class="sub" style="display:block;margin-top:8px">예약 판매: 이 시각부터 살 수 있어요 (그 전엔 '오픈 예정'으로 보여요)</label><input type="datetime-local" name="open_at" value="${toKSTInput(item && item.open_at)}">
 <label class="sub" style="display:block;margin-top:8px">판매 종료: 이 시각이 지나면 살 수 없어요</label><input type="datetime-local" name="close_at" value="${toKSTInput(item && item.close_at)}">
 <p class="sub">비워 두면 설정하지 않아요.</p></div>` : '<p class="sub" style="margin:0 0 12px">🔒 예약 판매·공개는 라이센스를 등록하면 쓸 수 있어요.</p>';
-const schedTxt = (i) => { const a = []; if (Number(i.show_at)) a.push('공개 ' + fmtKST(i.show_at)); if (Number(i.open_at)) a.push('판매 ' + fmtKST(i.open_at)); if (Number(i.close_at)) a.push('종료 ' + fmtKST(i.close_at)); return a.length ? ' · 🗓 ' + a.join(' / ') : ''; };
+const schedTxt = (i) => { const a = []; if (Number(i.sale_price) && Number(i.sale_until)) a.push('🔥 세일 ' + won(i.sale_price) + ' ~' + fmtKST(i.sale_until)); if (Number(i.show_at)) a.push('공개 ' + fmtKST(i.show_at)); if (Number(i.open_at)) a.push('판매 ' + fmtKST(i.open_at)); if (Number(i.close_at)) a.push('종료 ' + fmtKST(i.close_at)); return a.length ? ' · 🗓 ' + a.join(' / ') : ''; };
 const saleGate = (item) => { const st = itemState(item); return st === 'soon' ? `아직 판매 전이에요 (${fmtKST(item.open_at)} 오픈)` : st === 'ended' ? '판매가 종료된 상품이에요' : st === 'hidden' ? '아직 공개되지 않은 상품이에요' : ''; };
 const schedBlock = (item, st) => st === 'soon'
   ? `<div class="nt" style="font-size:16px;text-align:center"><b>🗓 ${esc(fmtKST(item.open_at))}에 판매가 시작돼요</b><br><span id="cd" class="sm"></span></div><script>(function(){var T=Date.now()+${Math.max(0, Number(item.open_at) - Date.now())},e=document.getElementById('cd'),iv;function t(){var s=Math.max(0,Math.floor((T-Date.now())/1000));if(s<=0){clearInterval(iv);e.textContent='곧 열려요...';setTimeout(function(){location.reload()},1500);return}var d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);e.textContent='남은 시간 '+(d?d+'일 ':'')+h+'시간 '+m+'분 '+(s%60)+'초'}t();iv=setInterval(t,1000)})()</script>`
@@ -1258,6 +1277,71 @@ function salesDashboard(orders, items) {
 <div class="card"><b>재구매율 ${rate}%</b><p class="sub" style="margin:6px 0 0">구매자 ${buyers}명 중 ${repeat}명이 2번 이상 샀어요 (구매자 정보가 있는 주문 기준)</p></div>`;
 }
 
+// ----- 기간 한정 세일 (Plus): 세일 기간에는 상품 가격이 자동으로 세일가로 보이고, 끝나면 원래 가격으로 돌아와요 -----
+const applySale = (it) => {
+  if (it && Number(it.sale_price) > 0) {
+    const now = Date.now(), f = Number(it.sale_from) || 0, u = Number(it.sale_until) || 0;
+    if (now >= f && u && now < u && Number(it.sale_price) < Number(it.price)) {
+      Object.defineProperty(it, 'base_price', { value: it.price, writable: true, configurable: true, enumerable: false });
+      Object.defineProperty(it, 'on_sale', { value: true, writable: true, configurable: true, enumerable: false });
+      it.price = Number(it.sale_price);
+    }
+  }
+  return it;
+};
+{ const ib = store.itemById.bind(store), isb = store.itemsByShop.bind(store);
+  store.itemById = async (id) => applySale(await ib(id));
+  store.itemsByShop = async (sid) => (await isb(sid)).map(applySale); }
+const readSale = (f, price, item) => {
+  const pct = parseInt(f.sale_pct, 10);
+  if (!pct) return { sale_price: 0, sale_from: 0, sale_until: 0 };
+  if (!(pct >= 1 && pct <= 90)) return { err: '할인율은 1~90% 사이로 정해 주세요' };
+  const from = parseKST(f.sale_start), until = parseKST(f.sale_end);
+  if (!until) return { err: '세일 종료 시각을 정해 주세요 (끝나면 원래 가격으로 돌아가요)' };
+  if (until <= Date.now() && until !== Number(item && item.sale_until)) return { err: '세일 종료 시각은 지금보다 뒤여야 해요' };
+  if (from && from >= until) return { err: '세일 시작은 종료보다 앞이어야 해요' };
+  return { sale_price: Math.max(100, Math.floor(price * (100 - pct) / 100)), sale_from: from, sale_until: until };
+};
+const saleFields = (item, pro) => { if (!pro) return ''; const base = Number(item && (item.base_price || item.price)) || 0, sp = Number(item && item.sale_price) || 0, pct = base && sp ? Math.round((1 - sp / base) * 100) : '';
+  return `<input type="hidden" name="sale" value="1"><div class="card" style="margin:8px 0 12px"><b style="font-size:14px">🔥 기간 한정 세일 <span class="sub">(Plus · 한국 시간)</span></b>
+<input name="sale_pct" type="number" inputmode="numeric" min="1" max="90" value="${pct}" placeholder="할인율 % (비우면 세일 없음)" style="margin-top:8px">
+<label class="sub" style="display:block;margin-top:8px">시작 (비우면 지금부터)</label><input type="datetime-local" name="sale_start" value="${toKSTInput(item && item.sale_from)}">
+<label class="sub" style="display:block;margin-top:8px">종료 (끝나면 원래 가격으로 자동 복귀)</label><input type="datetime-local" name="sale_end" value="${toKSTInput(item && item.sale_until)}"></div>`; };
+// ----- 구매 후 자동 안내 문구 (Plus) -----
+const afterFields = (item, pro) => (pro ? `<input type="hidden" name="after" value="1"><textarea name="after_msg" maxlength="500" placeholder="구매 후 안내 문구 (선택): 구매가 끝나면 구매자에게 자동으로 보여줘요. 예) 사용 방법, 유의사항">${esc((item && item.after_msg) || '')}</textarea>` : '');
+// ----- 재입고 알림 (Lite, 무료): 품절 상품에서 [알림 받기] → 재고가 들어오면 푸시 -----
+const restockBox = (item, shop, me) => { const on = ((shopOpts(shop).restock || {})[item.id] || []).includes(me.id); return `<form class="bx" method="post" action="/i/${item.id}/restock"><b>🔔 재입고 알림</b><p class="sm" style="margin:6px 0 10px">재고가 들어오면 푸시로 알려드려요. (알림을 받으려면 내 상점 화면에서 푸시 알림을 켜 두세요)</p><button${on ? ' style="background:#6b7280"' : ''}>${on ? '알림 신청 취소' : '알림 받기'}</button></form>`; };
+async function restockNotify(shop, item, left) {
+  try {
+    const fresh = await store.shopById(shop.id); const o = shopOpts(fresh);
+    const list = (o.restock || {})[item.id]; if (!list || !list.length) return;
+    delete o.restock[item.id]; await saveOpts(fresh, o);
+    for (const uid of list.slice(0, 300)) pushToUser(uid, { title: '재입고 알림', body: `${item.title} 재고가 들어왔어요 (${left}개)`, url: '/i/' + item.id }).catch(() => {});
+  } catch (e) { console.error('재입고 알림 실패', e.message); }
+}
+// ----- 재고 부족 알림 (Plus): 남은 재고가 N개 이하가 되면 주인에게 미리 알려줘요 -----
+async function lowStockCheck(shop, itemId) {
+  try {
+    if (!shop) return;
+    const n = Number(shopOpts(shop).lowStock) || 0; if (!n || !(await proOk(shop))) return;
+    const it = await store.itemById(itemId); if (!it || it.stock == null) return;
+    const left = stockLines(it.stock).length; if (left <= 0 || left > n) return;
+    const fresh = await store.shopById(shop.id); const o = shopOpts(fresh); o.lowSent = o.lowSent || {};
+    if (o.lowSent[itemId]) return;
+    o.lowSent[itemId] = 1; await saveOpts(fresh, o);
+    await notify(fresh, `⚠️ 재고가 ${left}개 남았어요: ${it.title}. 미리 채워주세요.`, 'stock', null);
+  } catch (e) { console.error('재고 부족 알림 실패', e.message); }
+}
+async function lowStockReset(shop, itemId, left) { try { const o = shopOpts(shop); if (o.lowSent && o.lowSent[itemId] && left > (Number(o.lowStock) || 0)) { delete o.lowSent[itemId]; await saveOpts(shop, o); } } catch {} }
+// ----- 공지 배너 (Plus): 상점 맨 위에 눈에 띄는 배너, 노출 기간 지정 -----
+const NB_COLORS = [['event', '이벤트 (주황)', '#f97316'], ['notice', '공지 (검정)', '#18181b'], ['warn', '점검·주의 (빨강)', '#dc2626'], ['info', '안내 (파랑)', '#2563eb']];
+const noticeBanner = (shop) => {
+  if (!shop || !shop._pro) return '';
+  const nb = shopOpts(shop).nb; if (!nb || !nb.text || (nb.until && Date.now() >= nb.until)) return '';
+  const c = (NB_COLORS.find((x) => x[0] === nb.color) || NB_COLORS[0])[2];
+  return `<div style="background:${c};color:#fff;padding:12px 14px;border-radius:16px;margin:0 0 14px;font-weight:700;font-size:14px;line-height:1.5">${esc(nb.text)}</div>`;
+};
+
 // ----- 관리 화면의 라이센스 탭 2개 (매출 통계 · 라이센스 혜택) -----
 async function proTabsHtml(shop, ctx) {
   const { ownerU, items, orders, ownerView } = ctx;
@@ -1270,6 +1354,16 @@ ${pro ? salesDashboard(orders, items) : lock}`;
   if (!pro) return stats + `<!--TAB:pro::라이센스 혜택-->
 <h2>라이센스 혜택</h2>${lock}<div class="card"><p class="sub" style="margin:0">Plus: 매출 통계, 쿠폰 10개, 테마 색상·로고·배너, 예약 판매·공개, 상점 4개, 만료 임박 알림 · Pro: 쿠폰 20개, 직원 계정, 전용 주소·PRO 뱃지, 어뷰징 자동 차단, 자동 충전, 상점 5개</p></div>`;
   const coupons = couponList(shop), staff = o.staff || [], blog = o.blog || [];
+  const nb = o.nb || {}, nbOn = !!(nb.text && (!nb.until || Date.now() < nb.until));
+  const extraForms = `<h2>공지 배너</h2>
+<form class="card" method="post" action="/m/${shop.key}/nbanner"><b>상점 맨 위 배너 ${nbOn ? '<span class="sub">(노출 중)</span>' : ''}</b>
+<input name="text" value="${esc(nb.text || '')}" placeholder="예) 🎉 이번 주말 전 상품 10% 할인!" maxlength="100" style="margin-top:8px">
+<select name="color" style="${SEL_STYLE}">${NB_COLORS.map(([k, l]) => `<option value="${k}" ${(nb.color || 'event') === k ? 'selected' : ''}>${l}</option>`).join('')}</select>
+<input name="days" type="number" inputmode="numeric" min="1" max="90" placeholder="노출 일수 (비우면 내릴 때까지 계속)">
+<button>배너 저장</button><button name="off" value="1" style="background:#6b7280;margin-top:8px">배너 내리기</button>
+<p class="sub">${nb.until && nbOn ? `노출 종료: ${fmtKST(nb.until)}` : '이벤트·점검 안내를 상점 맨 위에 눈에 띄게 띄워요.'}</p></form>
+<h2>재고 부족 알림</h2>
+<form class="card" method="post" action="/m/${shop.key}/lowstock"><input name="n" type="number" inputmode="numeric" min="0" max="1000" value="${Number(o.lowStock) || ''}" placeholder="남은 재고가 몇 개 이하가 되면 알릴까요? (비우면 끔)"><button>저장</button><p class="sub">재고를 쓰는 상품의 남은 개수가 이 값 이하가 되면 푸시와 디스코드(재고 알림)로 미리 알려줘요. 재고를 다시 채우면 다음에 또 알려줘요.</p></form>`;
   const cpLine = (c) => `<div class="card tcard"><b style="font-size:16px;user-select:all">${esc(c.code)}</b> <span class="price">${c.type === 'won' ? won(c.val) + ' 할인' : c.val + '% 할인'}</span><br><span class="sub">사용 ${(c.used || []).length}${c.max ? '/' + c.max : ''}회${c.exp ? ' · ' + fmtDay(c.exp) + '까지' : ''}</span><form method="post" action="/m/${shop.key}/coupons/delete" onsubmit="return confirm('이 쿠폰을 삭제할까요?')"><input type="hidden" name="code" value="${esc(c.code)}"><button style="background:#dc2626">삭제</button></form></div>`;
   const design = ownerView ? `<h2>상점 꾸미기</h2>
 <form class="card" method="post" action="/m/${shop.key}/design">
@@ -1289,11 +1383,14 @@ ${isPro ? `<b style="font-size:14px;display:block;margin-top:10px">전용 주소
 <button>꾸미기 저장</button></form>${imgPick('banner', 1200, 400, 0.7)}${imgPick('logo', 256, 256, 0.8)}
 ${isPro ? `<h2>직원 계정 (${staff.length}/${MAX_STAFF})</h2>
 <form class="card row" method="post" action="/m/${shop.key}/staff"><input name="code" placeholder="직원으로 추가할 회원번호 8자리" required minlength="8" maxlength="12"><button>추가</button></form>
-${staff.map((x) => `<form class="card" method="post" action="/m/${shop.key}/staff/remove" onsubmit="return confirm('직원에서 뺄까요?')" style="display:flex;justify-content:space-between;align-items:center;gap:8px"><span>회원 ${esc(String(x.id).slice(0, 8))}${x.name ? ' (' + esc(x.name) + ')' : ''}</span><input type="hidden" name="uid" value="${esc(x.id)}"><button style="width:auto;background:#6b7280">빼기</button></form>`).join('') || '<p class="sub">직원이 없어요. 직원은 상품·주문·충전 승인·문의 같은 운영을 도울 수 있고, 이름·계좌·알림·꾸미기·직원 관리는 주인만 바꿀 수 있어요.</p>'}` : '<p class="sub">🔒 직원 계정은 Pro에서 쓸 수 있어요.</p>'}` : '<p class="sub">꾸미기·직원 관리는 상점 주인만 바꿀 수 있어요.</p>';
+${staff.map((x) => { const pm = staffPerms(x); return `<div class="card"><b>회원 ${esc(String(x.id).slice(0, 8))}${x.name ? ' (' + esc(x.name) + ')' : ''}</b>
+<form method="post" action="/m/${shop.key}/staff/perms"><input type="hidden" name="uid" value="${esc(x.id)}">${STAFF_PERMS.map(([k, l]) => `<label style="display:flex;gap:8px;align-items:flex-start;margin:7px 0;font-size:14px"><input type="checkbox" name="p_${k}" ${pm.includes(k) ? 'checked' : ''} style="width:auto;margin:3px 0 0"> ${esc(l)}</label>`).join('')}<button>권한 저장</button></form>
+<form method="post" action="/m/${shop.key}/staff/remove" onsubmit="return confirm('직원에서 뺄까요?')" style="margin-top:8px"><input type="hidden" name="uid" value="${esc(x.id)}"><button style="background:#6b7280">직원에서 빼기</button></form></div>`; }).join('') || '<p class="sub">직원이 없어요. 추가하면 기본 권한(상품 정보·판매내역·충전 승인·차단·문의·공지·쿠폰)이 켜지고, 재고 내용 열람과 포인트 조정은 꺼진 채로 시작해요. 직원마다 체크박스로 바꿀 수 있고, 이름·계좌·알림·꾸미기·직원 관리는 항상 주인만 바꿀 수 있어요.</p>'}` : '<p class="sub">🔒 직원 계정은 Pro에서 쓸 수 있어요.</p>'}` : '<p class="sub">꾸미기·직원 관리는 상점 주인만 바꿀 수 있어요.</p>';
   return stats + `<!--TAB:pro::라이센스 혜택-->
 <h2>라이센스 혜택</h2>
 <div class="card"><b>✨ ${PLAN_NAME[plan]} 적용 중</b><p class="sub" style="margin:6px 0 0">${isAdmin(ownerU) ? '운영자 상점이에요' : `${fmtDay(isPro ? ownerU.license_until : ownerU.plus_until)}까지`} · 상점 ${PLAN_SHOPS[plan]}개 · 예약 판매·공개(상품 등록·수정에서 설정) · 만료 임박 알림(7일·3일·1일 전)</p></div>
 ${design}
+${extraForms}
 <h2>쿠폰 (${coupons.length}/${cap})</h2>
 <form class="card" method="post" action="/m/${shop.key}/coupons">
 <input name="code" placeholder="쿠폰 코드 (영문 대문자·숫자 4~20자)" required maxlength="20" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
@@ -1327,7 +1424,7 @@ async function licExpiryJob() {
   }
   if (licWarned.size > 5000) licWarned.clear();
 }
-async function manageShop(req, res, key, ownerOnly = false) {
+async function manageShop(req, res, key, ownerOnly = false, perm = '') {
   const shop = await store.shopByKey(key);
   if (!shop) { notFound(res, '상점을 찾을 수 없어요'); return null; }
   const u = await currentUser(req);
@@ -1336,7 +1433,12 @@ async function manageShop(req, res, key, ownerOnly = false) {
   if (shop.deleted) { notFound(res, '삭제된 상점이에요'); return null; }
   if (!shop.owner) { redirect(res, '/claim/' + shop.key); return null; }
   if (u.id !== shop.owner) {
-    if (!ownerOnly && isStaff(shop, u.id) && await proOnly(shop)) return shop; // 직원 계정 (Pro)
+    if (!ownerOnly && isStaff(shop, u.id) && await proOnly(shop)) { // 직원 계정 (Pro)
+      const pm = staffPerms(staffEntry(shop, u.id));
+      if (perm && !pm.includes(perm)) { send(res, 403, page('권한 없음', '<h1>이 작업은 권한이 없어요</h1><p class="sub">상점 주인에게 권한을 요청하세요.</p>')); return null; }
+      Object.defineProperty(shop, '_perms', { value: pm, writable: true, configurable: true, enumerable: false });
+      return shop;
+    }
     send(res, 403, page('권한 없음', ownerOnly && isStaff(shop, u.id) ? '<h1>이 작업은 상점 주인만 할 수 있어요</h1>' : '<h1>이 상점의 주인이 아니에요</h1>')); return null;
   }
   return shop;
@@ -1977,6 +2079,7 @@ route('GET', /^\/m\/([\w-]+)$/, async (req, res, m) => {
   const ownerU = shop.owner ? await store.userById(shop.owner) : null;
   const licLeftM = ownerU ? Number(ownerU.license_until || 0) - Date.now() : 0;
   const ownerView = !!me && (isAdmin(me) || me.id === shop.owner);
+  const can = (p) => !shop._perms || shop._perms.includes(p);
   const endM = ownerU ? Math.max(Number(ownerU.license_until) || 0, Number(ownerU.plus_until) || 0) - Date.now() : 0;
   const licBanner = ownerU && !isAdmin(ownerU) && endM > 0 && endM <= 7 * DAY && !ownerU.sub_plan ? `<div class="warn">요금제가 ${Math.ceil(endM / DAY)}일 뒤 만료돼요. 내 상점 화면에서 구독하거나 키를 등록해 연장하세요.</div>` : '';
   const autoOk = !!(ownerU && planOf(ownerU) === 'pro'); // 자동 충전은 Pro인 상점만
@@ -2057,7 +2160,7 @@ ${Object.keys(NOTI).map((k) => `<label style="display:block;margin-top:12px"><b>
 <p class="sub" style="margin:4px 0">이 웹훅으로 받을 알림</p>${notiBoxes(Object.keys(NOTI))}<button style="margin-top:8px">추가</button></form>`
     : `<p class="sub">웹훅을 ${MAX_HOOKS}개 다 등록했어요. 새로 추가하려면 하나를 삭제하세요.</p>`;
   const proTabs = await proTabsHtml(shop, { me, ownerU, items, orders, ownerView });
-  send(res, 200, panelPage({ title: shop.name, heading: shop.name + ' 관리', key: 'm-' + shop.key, chip: { href: '/s/' + shop.id, label: '상점 보기' }, links: [{ href: '/s/' + shop.id, label: '상점 보기' }, { href: '/my', label: '내 상점 목록' }] }, `<!--TAB:home::개요-->
+  send(res, 200, panelPage({ title: shop.name, heading: shop.name + ' 관리', key: 'm-' + shop.key, chip: { href: '/s/' + shop.id, label: '상점 보기' }, links: [{ href: '/s/' + shop.id, label: '상점 보기' }, { href: '/my', label: '내 상점 목록' }] }, tabFilter(shop, `<!--TAB:home::개요-->
 <h1>${esc(shop.name)} 관리</h1>
 ${licBanner}${ownerView ? '' : '<p class="sub">직원 계정으로 참여 중이에요. 상점 이름·충전 방식·알림 설정은 주인만 바꿀 수 있어요.</p>'}<form class="card" method="post" action="/m/${shop.key}/rename"><b>상점 이름</b><div class="row" style="margin-top:8px"><input name="name" value="${esc(shop.name)}" required maxlength="40"><button>변경</button></div></form>
 <div class="card"><b>내 상점 링크 (공유하세요)</b><br><code>${BASE}/s/${shop.id}</code><br><a href="/s/${shop.id}">열어보기</a></div>
@@ -2098,26 +2201,29 @@ ${(holders[t.id] || []).length ? `<div class="chips">${(holders[t.id] || []).map
 <form class="card row" method="post" action="/m/${shop.key}/blocks"><input name="code" placeholder="차단할 회원번호 8자리" required minlength="8" maxlength="12"><button style="background:#dc2626">차단</button></form>
 ${blockedIds.length ? `<div class="chips" style="margin-bottom:12px">${blockedIds.map((id) => `<form method="post" action="/m/${shop.key}/blocks/remove" class="chip2" onsubmit="return confirm('차단을 해제할까요?')"><input type="hidden" name="uid" value="${esc(id)}"><span>${esc(id.slice(0, 8))}</span><button title="해제">✕</button></form>`).join('')}</div>` : '<p class="sub">차단한 회원이 없어요 (차단하면 구매·충전이 막혀요)</p>'}
 <!--TAB:money::충전·포인트-->
-<h2>충전 받을 계좌</h2>
+${ownerView ? `<h2>충전 받을 계좌</h2>
 <form class="card" method="post" action="/m/${shop.key}/pay">
 <div class="row"><input name="bank" placeholder="은행" value="${esc(shop.bank)}" maxlength="20"><input name="holder" placeholder="예금주" value="${esc(shop.holder)}" maxlength="20"></div>
 <input name="account" placeholder="계좌번호" value="${esc(shop.account)}" maxlength="40" inputmode="numeric" style="margin-top:8px">
 <button>저장</button><p class="sub">충전할 때 보이는 계좌예요. 은행·계좌번호·예금주를 모두 적어야 열리고, 비우면 꺼져요.</p></form>
+` : ''}
 ${ownerView ? payModeBlock : '<p class="sub">충전 확인 방식은 상점 주인만 바꿀 수 있어요.</p>'}
-<h2>충전 대기 ${charges.length}건</h2>
+${can('charges') ? `<h2>충전 대기 ${charges.length}건</h2>
 ${charges.map((c) => `<div class="card"><b>${esc(c.name)}</b> <span class="price">${won(c.amount)}</span><br><span class="sub">회원 ${esc(c.user_id.slice(0, 8))} · ${fmtDate(c.created)}${Date.now() > c.created + CHARGE_TTL ? ' · 기한 지남' : ''}</span>
 ${c.image ? `<p style="margin:8px 0"><a href="/m/${shop.key}/charges/${c.token}/img" target="_blank">입금 사진 보기</a></p>` : ''}
 <form method="post" action="/m/${shop.key}/charges/${c.token}/confirm"><button>입금 확인 (포인트 지급)</button></form>
 <form method="post" action="/m/${shop.key}/charges/${c.token}/reject"><button style="background:#6b7280">거절</button></form></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
-<h2>포인트 직접 조정</h2>
+` : ''}
+${can('points') ? `<h2>포인트 직접 조정</h2>
 <form class="card" method="post" action="/m/${shop.key}/points"><input name="code" placeholder="회원번호 8자리" required minlength="8" maxlength="12"><input name="delta" type="number" placeholder="증감 (예: 1000 또는 -500)" required><input name="note" placeholder="메모 (선택)" maxlength="40"><button>조정</button></form>
+` : ''}
 <!--TAB:orders::매출·주문-->
 <h2>매출 ${won(total)} · 판매 ${orders.reduce((a, o) => a + orderQty(o), 0)}건</h2>
 <h2>최근 주문</h2>
 <a class="btn" href="/m/${shop.key}/sales" style="margin-bottom:10px">🔍 전체 판매내역 검색 (옛날 주문 포함)</a>
-${recent.map((o) => { const bc = o.buyer ? String(o.buyer).slice(0, 8) : ''; return `<div class="card tcard"><div class="row"><div style="flex:1;min-width:0"><b>${esc(titleOfItem.get(o.item) || '삭제된 상품')}</b><br><span class="sub">${won(o.price)} · ${fmtDate(o.paidAt)}<br>구매자 ${bc ? esc(bc) : '미연결'}</span></div>${bc ? (blockedIds.includes(o.buyer) ? '<span class="sub">차단됨</span>' : `<form method="post" action="/m/${shop.key}/blocks" onsubmit="return confirm('이 회원을 차단할까요?')" style="margin:0"><input type="hidden" name="code" value="${esc(bc)}"><button style="width:auto;padding:8px 14px;font-size:13px;background:#dc2626;border-radius:12px">차단</button></form>`) : ''}</div></div>`; }).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
+${recent.map((o) => { const bc = o.buyer ? String(o.buyer).slice(0, 8) : ''; return `<div class="card tcard"><div class="row"><div style="flex:1;min-width:0"><b>${esc(titleOfItem.get(o.item) || '삭제된 상품')}</b><br><span class="sub">${won(o.price)} · ${fmtDate(o.paidAt)}<br>구매자 ${bc ? esc(bc) : '미연결'}</span></div>${bc && can('block') ? (blockedIds.includes(o.buyer) ? '<span class="sub">차단됨</span>' : `<form method="post" action="/m/${shop.key}/blocks" onsubmit="return confirm('이 회원을 차단할까요?')" style="margin:0"><input type="hidden" name="code" value="${esc(bc)}"><button style="width:auto;padding:8px 14px;font-size:13px;background:#dc2626;border-radius:12px">차단</button></form>`) : ''}</div></div>`; }).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 <!--TAB:items::상품-->
-<h2>아이템 추가</h2>
+${can('stock') ? `<h2>아이템 추가</h2>
 <form class="card" method="post" action="/m/${shop.key}/items">
 <input name="title" placeholder="제목" required maxlength="80">
 <input name="price" type="number" min="100" step="100" placeholder="가격 (원)" required>
@@ -2126,18 +2232,19 @@ ${ownerU && isAdmin(ownerU) ? '<input name="license_days" type="number" inputmod
 <textarea name="secret" placeholder="잠금 정보 (결제 후에만 공개: 내용, 링크 등). 재고를 쓰거나 키 자동 발급이면 비워도 돼요"></textarea>
 <textarea name="stock" placeholder="재고 (선택). 한 줄에 하나씩 적으면 구매할 때마다 한 줄씩 순서대로 지급돼요. 예) 치킨버거 ⏎ 불고기버거. 비우면 재고 제한 없이 같은 잠금 정보를 보여줘요"></textarea>
 <input name="buy_limit" type="number" inputmode="numeric" min="1" max="100000" placeholder="인당 구매 한도 (선택, 한 사람이 살 수 있는 최대 개수)">
-${schedFields(null, !!(ownerU && licActive(ownerU)))}
+${schedFields(null, !!(ownerU && licActive(ownerU)))}${saleFields(null, !!(ownerU && licActive(ownerU)))}${afterFields(null, !!(ownerU && licActive(ownerU)))}
 ${imgField('')}
 ${titleSelect(titles, '')}
 <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" name="pub" checked style="width:auto;margin:0"> 상점 목록에 공개 (끄면 링크로만 열려요)</label>
 <button>등록</button></form>
+` : '<p class="sub">새 상품 등록은 "재고·잠금 정보" 권한이 있어야 해요</p>'}
 <h2>내 아이템</h2>
-${items.map((i) => `<div class="card">${i.image ? `<img src="/img/${i.id}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:12px;float:right;margin-left:10px">` : ''}<b>${esc(i.title)}</b> <span class="price">${won(i.price)}</span> <span class="sub">· ${i.pub ? '공개' : '비공개(링크로만)'}${i.stock != null ? ` · 재고 ${stockLines(i.stock).length}개` : ''}${itemLimit(i) ? ` · 인당 ${itemLimit(i)}개` : ''}${resvN.get(i.id) ? ` · 예약 대기 ${resvN.get(i.id)}개` : ''}${schedTxt(i)}</span><br><a href="/i/${i.id}">${BASE}/i/${i.id}</a><br><a href="/m/${shop.key}/items/${i.id}/edit">수정·삭제</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}${proTabs}`));
+${items.map((i) => `<div class="card">${i.image ? `<img src="/img/${i.id}" alt="" style="width:56px;height:56px;object-fit:cover;border-radius:12px;float:right;margin-left:10px">` : ''}<b>${esc(i.title)}</b> <span class="price">${won(i.price)}</span> <span class="sub">· ${i.pub ? '공개' : '비공개(링크로만)'}${i.stock != null ? ` · 재고 ${stockLines(i.stock).length}개` : ''}${itemLimit(i) ? ` · 인당 ${itemLimit(i)}개` : ''}${resvN.get(i.id) ? ` · 예약 대기 ${resvN.get(i.id)}개` : ''}${schedTxt(i)}</span><br><a href="/i/${i.id}">${BASE}/i/${i.id}</a><br><a href="/m/${shop.key}/items/${i.id}/edit">수정·삭제</a>${ownerU && licActive(ownerU) ? ` <form method="post" action="/m/${shop.key}/items/${i.id}/copy" style="display:inline" onsubmit="return confirm('이 상품을 복사할까요? (재고는 비어 있고 비공개로 만들어져요)')"><button style="width:auto;padding:4px 12px;font-size:13px;background:#6b7280">복사</button></form>` : ''}</div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}${proTabs}`)));
 });
 
 // 판매내역 검색 (옛날 주문까지 전부): 상품명·구매자 회원번호·주문번호·기간으로 찾기
 route('GET', /^\/m\/([\w-]+)\/sales$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'orders');
   if (!shop) return;
   const q = new URL(req.url, BASE).searchParams;
   const kw = String(q.get('q') || '').trim().toLowerCase().slice(0, 60);
@@ -2188,8 +2295,9 @@ ${cards || '<p class="sub"><i class="empty">검색 결과가 없어요</i></p>'}
 });
 
 route('POST', /^\/m\/([\w-]+)\/items$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'items');
   if (!shop) return;
+  if (shop._perms && !shop._perms.includes('stock')) return send(res, 403, page('권한 없음', '<h1>새 상품을 올리려면 "재고·잠금 정보" 권한이 필요해요</h1><p class="sub">상점 주인에게 권한을 요청하세요.</p>'));
   const f = await readForm(req);
   const price = parseInt(f.price, 10);
   if (!(price >= 100)) return send(res, 400, page('오류', '<h1>가격은 100원 이상이어야 해요</h1>'));
@@ -2214,6 +2322,13 @@ route('POST', /^\/m\/([\w-]+)\/items$/, async (req, res, m) => {
     if (sc.err) return send(res, 400, page('오류', `<h1>${esc(sc.err)}</h1>`));
     for (const k of ['show_at', 'open_at', 'close_at']) if (sc[k]) { item[k] = sc[k]; schedSet = true; }
   }
+  if ((f.sale === '1' || f.after === '1') && !(await proOk(shop))) return send(res, 403, page('요금제 필요', '<h1>세일·안내 문구는 Plus 이상에서 쓸 수 있어요</h1>'));
+  if (f.sale === '1') {
+    const sv = readSale(f, price, null);
+    if (sv.err) return send(res, 400, page('오류', `<h1>${esc(sv.err)}</h1>`));
+    if (sv.sale_price) { item.sale_price = sv.sale_price; item.sale_until = sv.sale_until; if (sv.sale_from) item.sale_from = sv.sale_from; schedSet = true; }
+  }
+  if (f.after === '1') { const am = str(f.after_msg, 500).trim(); if (am) { item.after_msg = am; schedSet = true; } }
   try { await store.createItem(item); }
   catch (e) {
     if (!bl && !schedSet) throw e;
@@ -2224,51 +2339,55 @@ route('POST', /^\/m\/([\w-]+)\/items$/, async (req, res, m) => {
 });
 
 route('GET', /^\/m\/([\w-]+)\/items\/([\w-]+)\/edit$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'items');
   if (!shop) return;
   const item = await store.itemById(m[2]);
   if (!item || item.shop !== shop.id) return notFound(res, '아이템을 찾을 수 없어요');
   const sold = (await store.ordersForItems([item.id])).length;
   const titles = await store.titlesByShop(shop.id);
   const proE = await proOk(shop);
+  const hasStock = !shop._perms || shop._perms.includes('stock');
   send(res, 200, page('아이템 수정', `<a class="sub" href="/m/${shop.key}">← 관리로 돌아가기</a>
 <h1>아이템 수정</h1>
 ${sold ? `<p class="warn">이미 ${sold}건 팔렸어요. 가격을 바꿔도 이전 주문 금액은 그대로이고, 잠금 정보를 바꾸면 이전 구매자에게도 바뀐 내용이 보여요.</p>` : ''}
 <form class="card" method="post" action="/m/${shop.key}/items/${item.id}">
 <input name="title" value="${esc(item.title)}" required maxlength="80">
-<input name="price" type="number" min="100" step="100" value="${esc(item.price)}" required>
+<input name="price" type="number" min="100" step="100" value="${esc(item.base_price || item.price)}" required>
 <textarea name="preview" required>${esc(item.preview)}</textarea>
-<textarea name="secret" placeholder="잠금 정보 (재고를 쓰면 비워도 돼요)">${esc(item.secret)}</textarea>
+${hasStock ? `<textarea name="secret" placeholder="잠금 정보 (재고를 쓰면 비워도 돼요)">${esc(item.secret)}</textarea>
 <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" name="use_stock" ${item.stock != null ? 'checked' : ''} style="width:auto;margin:0"> 재고 사용 (한 줄에 하나, 구매할 때마다 순서대로 지급)</label>
 <textarea name="stock" placeholder="남은 재고 (한 줄에 하나)">${esc(item.stock || '')}</textarea>
+` : '<p class="sub">🔒 잠금 정보와 재고는 "재고·잠금 정보" 권한이 있어야 볼 수 있어요</p>'}
 <input name="buy_limit" type="number" inputmode="numeric" min="1" max="100000" value="${itemLimit(item) || ''}" placeholder="인당 구매 한도 (비우면 제한 없음)">
-${schedFields(item, proE)}
+${schedFields(item, proE)}${saleFields(item, proE)}${afterFields(item, proE)}
 <p class="sub" style="margin:-6px 0 10px">한 사람이 이 상품을 살 수 있는 최대 개수예요 (지금까지 산 개수 포함). 한도가 있는 상품은 포인트로만 살 수 있어요.</p>
 ${imgField(item.image ? item.id : '')}
 ${titleSelect(titles, item.title_id)}
 <label style="display:flex;gap:8px;align-items:center;margin:0 0 10px"><input type="checkbox" name="pub" ${item.pub ? 'checked' : ''} style="width:auto;margin:0"> 상점 목록에 공개 (끄면 링크로만 열려요)</label>
 <button>저장</button></form>
+${proE ? `<form method="post" action="/m/${shop.key}/items/${item.id}/copy" onsubmit="return confirm('이 상품을 복사할까요? (재고는 비어 있고 비공개로 만들어져요)')"><button style="background:#6b7280">이 상품 복사하기</button></form>` : ''}
 <h2>삭제</h2>
 ${sold ? '<p class="sub">판매 기록이 있는 아이템은 삭제할 수 없어요. 구매자가 계속 열람해야 하니까요. 대신 위에서 공개를 꺼서 목록에서 숨기세요.</p>'
  : `<form method="post" action="/m/${shop.key}/items/${item.id}/delete" onsubmit="return confirm('정말 삭제할까요? 되돌릴 수 없어요.')"><button style="background:#dc2626">이 아이템 삭제</button></form>`}`));
 });
 
 route('POST', /^\/m\/([\w-]+)\/items\/([\w-]+)$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'items');
   if (!shop) return;
   const item = await store.itemById(m[2]);
   if (!item || item.shop !== shop.id) return notFound(res, '아이템을 찾을 수 없어요');
   const f = await readForm(req);
   const price = parseInt(f.price, 10);
   if (!(price >= 100)) return send(res, 400, page('오류', '<h1>가격은 100원 이상이어야 해요</h1>'));
-  const useStock = f.use_stock === 'on';
-  const secret = String(f.secret || '').slice(0, 10000);
-  const stock = useStock ? parseStock(f.stock) : null;
+  const noStock = !!(shop._perms && !shop._perms.includes('stock')); // 재고 권한이 없는 직원은 잠금 정보·재고를 그대로 둬요
+  const useStock = noStock ? item.stock != null : f.use_stock === 'on';
+  const secret = noStock ? String(item.secret || '') : String(f.secret || '').slice(0, 10000);
+  const stock = noStock ? item.stock : useStock ? parseStock(f.stock) : null;
   if (!secret.trim() && !useStock) return send(res, 400, page('오류', '<h1>잠금 정보나 재고 중 하나는 적어주세요</h1>'));
   const upd = { pub: f.pub === 'on', title: String(f.title).slice(0, 80), price, preview: String(f.preview).slice(0, 2000), secret };
   const img = cleanImage(f.image);
   if (img) upd.image = img; else if (f.del_image === 'on' && item.image) upd.image = null;
-  if (useStock || item.stock != null) { upd.stock = stock; upd.stock_ver = (item.stock_ver || 0) + 1; }
+  if (!noStock && (useStock || item.stock != null)) { upd.stock = stock; upd.stock_ver = (item.stock_ver || 0) + 1; }
   let tid = null;
   if (f.title_id) { const t = await store.titleById(String(f.title_id)); if (t && t.shop === shop.id) tid = t.id; }
   if (tid || item.title_id) upd.title_id = tid;
@@ -2281,6 +2400,14 @@ route('POST', /^\/m\/([\w-]+)\/items\/([\w-]+)$/, async (req, res, m) => {
     if (sc.err) return send(res, 400, page('오류', `<h1>${esc(sc.err)}</h1>`));
     for (const k of ['show_at', 'open_at', 'close_at']) if ((sc[k] || 0) !== (Number(item[k]) || 0)) { upd[k] = sc[k] || null; schedSet = true; }
   }
+  if ((f.sale === '1' || f.after === '1') && !(await proOk(shop))) return send(res, 403, page('요금제 필요', '<h1>세일·안내 문구는 Plus 이상에서 쓸 수 있어요</h1>'));
+  if (f.sale === '1') {
+    const sv = readSale(f, price, item);
+    if (sv.err) return send(res, 400, page('오류', `<h1>${esc(sv.err)}</h1>`));
+    for (const k of ['sale_price', 'sale_from', 'sale_until']) if ((sv[k] || 0) !== (Number(item[k]) || 0)) { upd[k] = sv[k] || null; schedSet = true; }
+  }
+  if (f.after === '1') { const am = str(f.after_msg, 500).trim(); if (am !== String(item.after_msg || '')) { upd.after_msg = am || null; schedSet = true; } }
+  const prevLeft = item.stock != null ? stockLines(item.stock).length : null;
   try { await store.updateItem(item.id, upd); }
   catch (e) {
     if (!bl && !schedSet) throw e;
@@ -2288,11 +2415,12 @@ route('POST', /^\/m\/([\w-]+)\/items\/([\w-]+)$/, async (req, res, m) => {
     return send(res, 500, page('저장 실패', `<h1>저장하지 못했어요</h1><p class="warn">데이터베이스에 필요한 칸이 아직 없는 것 같아요. Supabase SQL Editor에서 <code>${[bl ? LIMIT_SQL : '', schedSet ? OPTS_SQL : ''].filter(Boolean).join(' ')}</code> 를 한 번 실행한 뒤 다시 저장해 주세요.</p><p><a href="/m/${shop.key}">← 상점 관리로</a></p>`));
   }
   if (upd.stock != null) fulfillReservations(item.id).catch((e) => console.error('예약 처리 실패', e.message)); // 재고가 들어왔으면 예약자에게 자동 구매
+  if (upd.stock != null) { const nl = stockLines(upd.stock).length; if (prevLeft === 0 && nl > 0) restockNotify(shop, item, nl); lowStockReset(shop, item.id, nl); } // 재입고 알림 · 재고 부족 알림 다시 켜기
   redirect(res, `/m/${shop.key}`);
 });
 
 route('POST', /^\/m\/([\w-]+)\/items\/([\w-]+)\/delete$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'items');
   if (!shop) return;
   const item = await store.itemById(m[2]);
   if (!item || item.shop !== shop.id) return notFound(res, '아이템을 찾을 수 없어요');
@@ -2321,7 +2449,7 @@ route('POST', /^\/m\/([\w-]+)\/rename$/, async (req, res, m) => {
 });
 
 route('POST', /^\/m\/([\w-]+)\/blocks$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'block');
   if (!shop) return;
   const f = await readForm(req);
   const back = (msg) => send(res, 400, page('오류', `<h1>${esc(msg)}</h1><p><a href="/m/${shop.key}">돌아가기</a></p>`));
@@ -2340,7 +2468,7 @@ route('POST', /^\/m\/([\w-]+)\/blocks$/, async (req, res, m) => {
 });
 
 route('POST', /^\/m\/([\w-]+)\/blocks\/remove$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'block');
   if (!shop) return;
   const f = await readForm(req);
   const uid = str(f.uid, 60);
@@ -2387,7 +2515,7 @@ route('POST', /^\/m\/([\w-]+)\/pay$/, async (req, res, m) => {
 });
 
 route('POST', /^\/m\/([\w-]+)\/deposits\/([\w-]+)\/confirm$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'charges');
   if (!shop) return;
   const dep = await store.depositByToken(m[2]);
   if (dep && dep.shop === shop.id) {
@@ -2536,6 +2664,7 @@ const buyHandler = async (req, res, m) => {
   const shopN = await store.shopById(item.shop);
   await notify(shopN, `💰 새 주문! ${item.title}${qty > 1 ? ` × ${qty}` : ''} (${won(total)})`, 'sale', saleVars(shopN, item, total, qty));
   if (soldLast) await notify(shopN, `📦 재고가 0이 됐어요: ${item.title}. 재고를 채워주세요.`, 'stock', { item: item.title, shop: shopN ? shopN.name : '', link: BASE + '/i/' + item.id });
+  else lowStockCheck(shopN, item.id);
   redirect(res, `/o/${order.token}`);
 };
 route('POST', /^\/i\/([\w-]+)\/buy$/, async (req, res, m) => {
@@ -2807,7 +2936,7 @@ route('POST', /^\/w\/([\w-]+)\/charge\/([\w-]+)\/cancel$/, async (req, res, m) =
 
 // 상점 운영자: 충전 승인/거절, 포인트 직접 조정
 route('POST', /^\/m\/([\w-]+)\/charges\/([\w-]+)\/(confirm|reject)$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'charges');
   if (!shop) return;
   const c = await store.chargeByToken(m[2]);
   if (c && c.shop === shop.id) { if (m[3] === 'confirm') await confirmCharge(c); else { await store.claimCharge(c.token, 'rejected'); abuseHit(shop, c.user_id, 'cancel'); } }
@@ -2815,7 +2944,7 @@ route('POST', /^\/m\/([\w-]+)\/charges\/([\w-]+)\/(confirm|reject)$/, async (req
 });
 
 route('POST', /^\/m\/([\w-]+)\/points$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'points');
   if (!shop) return;
   const f = await readForm(req);
   const back = (msg) => send(res, 400, page('오류', `<h1>${esc(msg)}</h1><p><a href="/m/${shop.key}">돌아가기</a></p>`));
@@ -2834,7 +2963,7 @@ route('POST', /^\/m\/([\w-]+)\/points$/, async (req, res, m) => {
 // 칭호 만들기 / 주기 / 회수 / 삭제 (상점 주인)
 // 메뉴 카테고리 만들기 / 이름·상품 고르기 저장 / 삭제
 route('POST', /^\/m\/([\w-]+)\/cats$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'shop');
   if (!shop) return;
   const f = await readForm(req);
   const name = str(f.name, 20);
@@ -2847,7 +2976,7 @@ route('POST', /^\/m\/([\w-]+)\/cats$/, async (req, res, m) => {
   redirect(res, `/m/${shop.key}#cats`);
 });
 route('POST', /^\/m\/([\w-]+)\/cats\/([\w-]+)\/(save|delete)$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'shop');
   if (!shop) return;
   const f = await readForm(req);
   let cats = parseCats(shop);
@@ -2865,7 +2994,7 @@ route('POST', /^\/m\/([\w-]+)\/cats\/([\w-]+)\/(save|delete)$/, async (req, res,
 });
 
 route('POST', /^\/m\/([\w-]+)\/titles$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'shop');
   if (!shop) return;
   const f = await readForm(req);
   const name = str(f.name, 20);
@@ -2881,7 +3010,7 @@ route('POST', /^\/m\/([\w-]+)\/titles$/, async (req, res, m) => {
 });
 
 route('POST', /^\/m\/([\w-]+)\/titles\/([\w-]+)\/(grant|revoke|delete|discount|auto|payback)$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'shop');
   if (!shop) return;
   const t = await store.titleById(m[2]);
   if (!t || t.shop !== shop.id) return notFound(res, '칭호를 찾을 수 없어요');
@@ -2976,7 +3105,7 @@ route('POST', /^\/admin\/notices\/([\w-]+)\/delete$/, async (req, res, m) => {
   redirect(res, `/admin?m=${enc('공지를 삭제했어요')}`);
 });
 route('POST', /^\/m\/([\w-]+)\/notices$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'shop');
   if (!shop) return;
   const back = `<p><a href="/m/${shop.key}#notice">← 상점 관리로</a></p>`;
   const n = noticeFields(await readForm(req));
@@ -2991,7 +3120,7 @@ route('POST', /^\/m\/([\w-]+)\/notices$/, async (req, res, m) => {
   redirect(res, `/m/${shop.key}#notice`);
 });
 route('POST', /^\/m\/([\w-]+)\/notices\/([\w-]+)\/delete$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'shop');
   if (!shop) return;
   try { const n = await store.noticeById(m[2]); if (n && n.shop === shop.id) await store.deleteNotice(n.id); } catch (e) { console.error('공지 삭제 실패', e.message); }
   redirect(res, `/m/${shop.key}#notice`);
@@ -3095,7 +3224,7 @@ route('POST', /^\/admin\/users\/([\w-]+)\/ban$/, async (req, res, m) => {
 });
 
 route('GET', /^\/m\/([\w-]+)\/charges\/([\w-]+)\/img$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'charges');
   if (!shop) return;
   const c = await store.chargeByToken(m[2]);
   const mm = c && c.shop === shop.id && typeof c.image === 'string' && c.image.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=]+)$/);
@@ -3148,7 +3277,7 @@ route('GET', /^\/s\/([\w-]+)$/, async (req, res, m) => {
     const stockTxt = st === 'soon' ? `${fmtKST(i.open_at)} 오픈` : st === 'ended' ? '판매 종료' : left == null ? '무제한' : left ? `${left}개` : '품절';
     return `<a class="pc${left === 0 || st !== 'on' ? ' off' : ''}" href="/i/${i.id}"><div class="im"><img src="${i.image ? `/img/${i.id}` : `/default-product.jpg?v=${ICON_VER}`}" alt="" loading="lazy"></div><div class="pb"><h2>${esc(i.title)}</h2>
 <div class="rt">${ICO.star}<span>${rv ? (rv.sum / rv.n).toFixed(1) : '-'}</span>${rv ? `<span class="sm">(${rv.n})</span>` : ''}</div>
-<div class="pr"><b>${won(i.price)}</b><span>재고: <b>${stockTxt}</b></span></div></div></a>`;
+<div class="pr"><span>${i.on_sale ? `<s class="sm">${won(i.base_price)}</s> ` : ''}<b>${i.on_sale ? '🔥 ' : ''}${won(i.price)}</b></span><span>재고: <b>${stockTxt}</b></span></div></div></a>`;
   };
   send(res, 200, shopPage(shop, shop.name, bannerHtml(shop) + noticeBlock(siteN, '운영자 공지') + noticeBlock(shopN, '상점 공지') + (items.length ? PRODUCT_SEARCH_BOX + `<div class="pg">${items.map(card).join('')}</div>` + PRODUCT_SEARCH_JS : '<p class="sm"><i class="empty">비어 있어요</i></p>') + await titleRoster(shop), me, bal, '/s/' + shop.id, 'items', navGroups(shop, items)));
 });
@@ -3242,10 +3371,11 @@ route('GET', /^\/i\/([\w-]+)$/, async (req, res, m) => {
   const body = `<a class="sm" style="text-decoration:none" href="/s/${shop.id}">← ${esc(shop.name)}</a>
 <div class="pc" style="margin-top:12px"><div class="im" style="aspect-ratio:4/3"><img src="${item.image ? `/img/${item.id}` : `/default-product.jpg?v=${ICON_VER}`}" alt=""></div><div class="pb"><h2>${esc(item.title)}</h2>
 <div class="rt">${ICO.star}<span>${reviews.length ? avg.toFixed(1) : '-'}</span>${reviews.length ? `<span class="sm">(${reviews.length})</span>` : ''}<span class="sm" style="margin-left:auto">판매 ${sold}건</span></div>
-<div class="pr">${disc ? `<span><s class="sm">${won(item.price)}</s> <b>${won(discPrice(item.price, disc))}</b> <span class="sm">(${disc}% 할인)</span></span>` : `<b>${won(item.price)}</b>`}<span>재고: <b>${stockTxt}</b></span></div></div></div>
+${item.on_sale ? `<div class="nt">🔥 세일 중! 원래 가격 <s>${won(item.base_price)}</s> · ${esc(fmtKST(item.sale_until))}까지</div>` : ''}<div class="pr">${disc ? `<span><s class="sm">${won(item.price)}</s> <b>${won(discPrice(item.price, disc))}</b> <span class="sm">(${disc}% 할인)</span></span>` : `<b>${won(item.price)}</b>`}<span>재고: <b>${stockTxt}</b></span></div></div></div>
 ${item.preview ? `<div class="bx" style="white-space:pre-wrap">${esc(item.preview)}</div>` : ''}
 ${lim ? `<div class="nt">인당 ${lim}개까지 살 수 있어요${me ? ` (내가 산 개수 ${haveN}개 · 남은 ${remain}개)` : ''}</div>` : ''}
 ${schedBanner(item, canMod)}${st === 'soon' || st === 'ended' ? schedBlock(item, st) : left === 0 ? (licOk && !blockedMe ? reserveBlock(item, me, bal, disc, myResv) : '<div class="nt">품절이에요</div>') : !licOk ? '<div class="nt">지금은 판매가 중단된 상점이에요</div>' : blockedMe ? `<div class="nt">${BLOCKED_MSG}</div>` : remain === 0 ? '<div class="nt">인당 구매 한도에 도달해서 더 살 수 없어요</div>' : pointsBlock(item, me, bal, shop, disc, remain)}
+${left === 0 && me && st === 'on' && !blockedMe ? restockBox(item, shop, me) : ''}
 <p style="margin:14px 0 0"><a class="sm" href="/s/${shop.id}/inquiry?item=${item.id}">이 상품 문의하기</a></p>
 <h3 style="font-size:20px;margin:30px 0 10px">후기 ${reviews.length ? `${avg.toFixed(1)} (${reviews.length})` : ''}</h3>
 ${reviews.map((r) => `<div class="bx">${stars(r.rating)} <span class="sm">구매자 ${esc(r.user_id.slice(0, 4))} · ${new Date(Number(r.created)).toLocaleDateString('ko-KR', { timeZone: 'Asia/Seoul' })}</span><br><span style="white-space:pre-wrap">${esc(r.body)}</span>${canMod ? `<form method="post" action="/i/${item.id}/reviews/${r.id}/delete" onsubmit="return confirm('이 후기를 삭제할까요?')"><button class="bb" style="background:#dc2626;margin-top:10px;padding:12px;font-size:15px">후기 삭제</button></form>` : ''}</div>`).join('') || '<p class="sm">아직 후기가 없어요. 구매한 사람이 남길 수 있어요.</p>'}`;
@@ -3368,10 +3498,12 @@ route('GET', /^\/o\/([\w-]+)$/, async (req, res, m) => {
 <textarea name="body" placeholder="후기를 남겨주세요 (최대 300자)" maxlength="300">${esc(rv ? rv.body : '')}</textarea>
 <button>${rv ? '후기 수정' : '후기 등록'}</button><p class="sub">후기는 모든 사람에게 보여요.</p></form>`;
   }
+  const afterMsg = item.after_msg && shopO && await proOk(shopO) ? `<div class="card"><b>📌 이용 안내</b><p style="white-space:pre-wrap;margin:6px 0 0">${esc(item.after_msg)}</p></div>` : '';
   send(res, 200, page('내 보관함', `${staff && order.buyer !== (me && me.id) ? '<p class="sub">판매자·운영자로 보는 중이에요 (구매자 화면과 같아요)</p>' : ''}<h1>잠금 해제됨</h1><h2>${esc(item.title)}</h2>
+${afterMsg}
 ${order.delivered ? `<p class="sub">지급된 상품${orderQty(order) > 1 ? ` (${orderQty(order)}개)` : ''}</p><div class="secret">${esc(order.delivered)}</div>` : (item.stock != null && order.delivered === '' ? '<div class="warn">재고가 부족해서 아직 지급되지 않았어요. 판매자가 직접 보내드려요. 판매자에게 문의해 주세요.</div>' : '')}
 ${item.secret && !itemLicDays(item) ? `<div class="secret">${esc(item.secret)}</div>` : ''}
-${itemLicDays(item) && order.delivered ? '<p class="sub">내 상점 → 자동 충전 이용권 칸에 키를 붙여넣으면 등록돼요</p>' : ''}
+${itemLicDays(item) && order.delivered ? '<p class="sub">내 상점 화면 맨 아래 "이용권 키 등록" 칸에 키를 붙여넣으면 등록돼요</p>' : ''}
 <p class="sub">이 주소를 북마크하면 언제든 다시 볼 수 있어요: <code>${BASE}/o/${order.token}</code></p>
 ${me && order.buyer === me.id && shopO && !shopO.deleted ? `<p><a href="/s/${shopO.id}/inquiry?item=${item.id}">판매자에게 문의하기</a></p>` : ''}
 ${reviewBox}`), { 'Cache-Control': 'no-store' });
@@ -3404,7 +3536,7 @@ route('POST', /^\/i\/([\w-]+)\/reviews\/([\w-]+)\/delete$/, async (req, res, m) 
   const item = await store.itemById(m[1]);
   if (!item) return notFound(res, '아이템을 찾을 수 없어요');
   const shop = await store.shopById(item.shop);
-  if (!shop || !(u.id === shop.owner || isAdmin(u))) return send(res, 403, page('권한 없음', '<h1>상점 주인이나 운영자만 후기를 삭제할 수 있어요</h1>'));
+  if (!shop || !(u.id === shop.owner || isAdmin(u) || (isStaff(shop, u.id) && staffPerms(staffEntry(shop, u.id)).includes('inquiry') && await proOnly(shop)))) return send(res, 403, page('권한 없음', '<h1>상점 주인이나 권한 있는 직원만 후기를 삭제할 수 있어요</h1>'));
   const rv = await store.reviewById(m[2]);
   if (rv && rv.item === item.id) await store.deleteReview(rv.id);
   redirect(res, `/i/${item.id}`);
@@ -3489,7 +3621,7 @@ route('POST', /^\/inquiry$/, async (req, res) => {
 
 // 답변 (상점 주인 / 운영자)
 route('POST', /^\/m\/([\w-]+)\/inquiries\/([\w-]+)\/reply$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'inquiry');
   if (!shop) return;
   const reply = inqReplyText(await readForm(req));
   try {
@@ -3576,10 +3708,22 @@ route('POST', /^\/m\/([\w-]+)\/staff$/, async (req, res, m) => {
   const o = shopOpts(shop); const list = Array.isArray(o.staff) ? o.staff : [];
   if (list.some((x) => x.id === target.id)) return redirect(res, `/m/${shop.key}#pro`);
   if (list.length >= MAX_STAFF) return back(`직원은 ${MAX_STAFF}명까지 추가할 수 있어요`);
-  list.push({ id: target.id, name: str(target.name, 20), t: Date.now() });
+  list.push({ id: target.id, name: str(target.name, 20), t: Date.now(), perms: STAFF_DEFAULT.slice() });
   o.staff = list;
   try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
   try { await store.updateShop(shop.id, { blocked: JSON.stringify(parseBlocked(shop).filter((x) => x !== target.id)) }); } catch {} // 차단돼 있던 사람이면 풀어요
+  redirect(res, `/m/${shop.key}#pro`);
+});
+
+route('POST', /^\/m\/([\w-]+)\/staff\/perms$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], true);
+  if (!shop) return;
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
+  const f = await readForm(req);
+  const o = shopOpts(shop); const x = (o.staff || []).find((y) => y.id === str(f.uid, 60));
+  if (!x) return redirect(res, `/m/${shop.key}#pro`);
+  x.perms = STAFF_PERMS.map((p) => p[0]).filter((k) => f['p_' + k] === 'on');
+  try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
   redirect(res, `/m/${shop.key}#pro`);
 });
 
@@ -3593,7 +3737,7 @@ route('POST', /^\/m\/([\w-]+)\/staff\/remove$/, async (req, res, m) => {
 });
 
 route('POST', /^\/m\/([\w-]+)\/coupons$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'promo');
   if (!shop) return;
   if (!(await proOk(shop))) return send(res, 403, needProPage(shop));
   const f = await readForm(req);
@@ -3617,7 +3761,7 @@ route('POST', /^\/m\/([\w-]+)\/coupons$/, async (req, res, m) => {
 });
 
 route('POST', /^\/m\/([\w-]+)\/coupons\/delete$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'promo');
   if (!shop) return;
   const f = await readForm(req);
   const o = shopOpts(shop); o.coupons = couponList(shop).filter((c) => c.code !== str(f.code, 20));
@@ -3626,11 +3770,81 @@ route('POST', /^\/m\/([\w-]+)\/coupons\/delete$/, async (req, res, m) => {
 });
 
 route('POST', /^\/m\/([\w-]+)\/autoblock$/, async (req, res, m) => {
-  const shop = await manageShop(req, res, m[1]);
+  const shop = await manageShop(req, res, m[1], false, 'promo');
   if (!shop) return;
   if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
   const f = await readForm(req);
   const o = shopOpts(shop); o.autoBlock = f.on === '1';
+  try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
+  redirect(res, `/m/${shop.key}#pro`);
+});
+
+// ---------- 쉬운 기능 라우트: 상품 복사 · 재입고 알림 · 재고 부족 알림 · 공지 배너 ----------
+route('POST', /^\/m\/([\w-]+)\/items\/([\w-]+)\/copy$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'items');
+  if (!shop) return;
+  if (!(await proOk(shop))) return send(res, 403, needProPage(shop));
+  const src = await store.itemById(m[2]);
+  if (!src || src.shop !== shop.id) return notFound(res, '아이템을 찾을 수 없어요');
+  const copy = { id: rid(9), shop: shop.id, pub: false, title: (String(src.title) + ' (복사)').slice(0, 80), price: Number(src.base_price || src.price), preview: src.preview || '', secret: src.secret || '', created: Date.now() };
+  if (src.stock != null) copy.stock = ''; // 재고(키·계정)는 복사하지 않아요. 새로 채워 넣으세요
+  if (src.image) copy.image = src.image;
+  if (src.title_id) copy.title_id = src.title_id;
+  if (itemLimit(src)) copy.buy_limit = itemLimit(src);
+  if (src.after_msg) copy.after_msg = src.after_msg;
+  try { await store.createItem(copy); }
+  catch (e) { if (!copy.buy_limit && !copy.after_msg) throw e; delete copy.buy_limit; delete copy.after_msg; await store.createItem(copy); } // 칸이 아직 없으면 빼고 복사
+  redirect(res, `/m/${shop.key}/items/${copy.id}/edit`);
+});
+
+route('POST', /^\/i\/([\w-]+)\/restock$/, async (req, res, m) => {
+  const u = await currentUser(req);
+  if (!u) return redirect(res, '/login?next=' + enc('/i/' + m[1]));
+  const item = await store.itemById(m[1]);
+  const shop = item ? await store.shopById(item.shop) : null;
+  if (!item || !shop || shop.deleted) return notFound(res, '아이템을 찾을 수 없어요');
+  if (isBlocked(shop, u.id)) return redirect(res, `/i/${item.id}`);
+  const lk = 'r' + shop.id;
+  while (cpLocks.has(lk)) await new Promise((r) => setTimeout(r, 30));
+  cpLocks.add(lk);
+  try {
+    const fresh = await store.shopById(shop.id); const o = shopOpts(fresh); o.restock = o.restock || {};
+    const list = o.restock[item.id] || []; const i = list.indexOf(u.id);
+    if (i >= 0) list.splice(i, 1);
+    else {
+      const total = Object.values(o.restock).reduce((a, l) => a + l.length, 0);
+      if (list.length >= 300 || total >= 2000) return redirect(res, `/i/${item.id}`);
+      list.push(u.id);
+    }
+    if (list.length) o.restock[item.id] = list; else delete o.restock[item.id];
+    await saveOpts(fresh, o);
+  } catch (e) {
+    console.error('재입고 알림 저장 실패 (shops.opts 칸이 있나요?)', e.message);
+    return send(res, 500, page('알림 신청 실패', `<h1>지금은 알림을 신청할 수 없어요</h1><p class="sub">잠시 뒤에 다시 해 주세요.</p><p><a href="/i/${item.id}">돌아가기</a></p>`));
+  } finally { cpLocks.delete(lk); }
+  redirect(res, `/i/${item.id}`);
+});
+
+route('POST', /^\/m\/([\w-]+)\/lowstock$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'promo');
+  if (!shop) return;
+  if (!(await proOk(shop))) return send(res, 403, needProPage(shop));
+  const f = await readForm(req);
+  const n = Math.max(0, Math.min(1000, parseInt(f.n, 10) || 0));
+  const o = shopOpts(shop); if (n) o.lowStock = n; else { delete o.lowStock; delete o.lowSent; }
+  try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
+  redirect(res, `/m/${shop.key}#pro`);
+});
+
+route('POST', /^\/m\/([\w-]+)\/nbanner$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'promo');
+  if (!shop) return;
+  if (!(await proOk(shop))) return send(res, 403, needProPage(shop));
+  const f = await readForm(req);
+  const o = shopOpts(shop);
+  const text = str(f.text, 100).trim();
+  if (f.off === '1' || !text) delete o.nb;
+  else { const days = Math.max(0, Math.min(90, parseInt(f.days, 10) || 0)); o.nb = { text, color: NB_COLORS.some((x) => x[0] === f.color) ? f.color : 'event', until: days ? Date.now() + days * DAY : 0 }; }
   try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
   redirect(res, `/m/${shop.key}#pro`);
 });
