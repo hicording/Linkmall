@@ -178,6 +178,7 @@ const sbStore = {
     catch { return sbGet('users', `license_until=gt.${Number(from)}&license_until=lt.${Number(to)}&select=id,email,license_until&limit=1000`); } // plus_until 칸이 아직 없을 때
   },
   async usersWithSub() { return sbGet('users', 'sub_plan=not.is.null&select=id,license_until,plus_until,sub_plan&limit=1000'); },
+  async shopsWithOpts() { return sbGet('shops', 'opts=not.is.null&select=*&limit=1000'); },
   async listLicenses() { return sbGet('licenses', 'select=*&order=created.desc&limit=40'); },
   async deleteUnusedLicense(k) { await sbDelete('licenses', `key=eq.${enc(k)}&used_by=is.null`); },
   async claimLicense(k, uid) {
@@ -372,6 +373,7 @@ const fileStore = {
   async shopsByStaff(uid) { return Object.values(load().shops).filter((x) => { try { return (JSON.parse(x.opts || '{}').staff || []).some((y) => y.id === uid); } catch { return false; } }); },
   async usersLicenseExpiring(from, to) { const ok = (t) => Number(t) > from && Number(t) < to; return Object.values(L().users).filter((x) => ok(x.license_until) || ok(x.plus_until)).map((x) => ({ id: x.id, email: x.email, license_until: x.license_until, plus_until: x.plus_until, sub_plan: x.sub_plan })); },
   async usersWithSub() { return Object.values(L().users).filter((x) => x.sub_plan).map((x) => ({ id: x.id, license_until: x.license_until, plus_until: x.plus_until, sub_plan: x.sub_plan })); },
+  async shopsWithOpts() { return Object.values(load().shops).filter((x) => x.opts); },
   async listLicenses() { return Object.values(L().licenses).sort((a, b) => b.created - a.created).slice(0, 40); },
   async deleteUnusedLicense(k) { const d = L(); if (d.licenses[k] && !d.licenses[k].used_by) delete d.licenses[k]; save(d); },
   async claimLicense(k, uid) { const d = L(); const x = d.licenses[k]; if (!x || x.used_by) return null; x.used_by = uid; x.used_at = Date.now(); save(d); return x; },
@@ -670,6 +672,7 @@ var h=location.hash.slice(1),s='';try{s=sessionStorage.getItem(K)||''}catch(e){}
 
 const pointsBlock = (item, me, bal, shop, disc = 0, remain = null) => {
   const price = Math.floor(Number(item.price) * (100 - disc) / 100);
+  const bk = bulkRule(shop);
   const canCharge = !!(shop.bank && shop.account && shop.holder);
   const nextUrl = '/i/' + item.id;
   if (!me) return `<a class="bb" href="/login?next=${enc(nextUrl)}">로그인하고 구매하기</a>`;
@@ -680,18 +683,19 @@ const pointsBlock = (item, me, bal, shop, disc = 0, remain = null) => {
   return `<form method="post" action="/i/${item.id}/buy" id="bf">
 ${multi ? `<div class="qt"><span style="font-weight:600">수량</span><div class="st"><button type="button" id="mi" aria-label="하나 빼기">−</button><input id="q" name="qty" type="number" inputmode="numeric" min="1" max="${max}" value="1"><button type="button" id="pl" aria-label="하나 더하기">+</button></div></div>
 <div class="qk"><button type="button" data-add="5">+5</button><button type="button" data-add="10">+10</button><button type="button" data-set="${max}">최대 (${max}개)</button></div>` : '<input type="hidden" name="qty" value="1">'}
-${disc ? `<p class="sm" style="margin:0 0 8px">칭호 할인 ${disc}% 적용 (원가 ${won(item.price)})</p>` : ''}${cpInput(shop)}<div class="bx tot"><span class="sm">총 결제 포인트</span><b id="tot">${pts(price)}</b></div>
+${disc ? `<p class="sm" style="margin:0 0 8px">칭호 할인 ${disc}% 적용 (원가 ${won(item.price)})</p>` : ''}${bk && multi ? `<p class="sm" style="margin:0 0 8px">🛒 ${bk.min}개 이상 사면 개당 ${bk.pct}% 추가 할인</p>` : ''}${cpInput(shop)}<div class="bx tot"><span class="sm">총 결제 포인트</span><b id="tot">${pts(price)}</b></div>
 <div class="nt" id="lack" hidden>포인트가 <b id="lk"></b> 부족해요 · ${chargeLink}</div>
 <button class="bb" id="bb">구매하기</button></form>
-<script>(function(){var P=${price},B=${Number(bal) || 0},M=${max},q=document.getElementById('q'),tot=document.getElementById('tot'),lack=document.getElementById('lack'),lk=document.getElementById('lk'),bb=document.getElementById('bb'),f=document.getElementById('bf'),cp=document.getElementById('cp');
+<script>(function(){var P=${price},BK=${bk && multi ? bk.min : 0},BP=${bk ? bk.pct : 0},B=${Number(bal) || 0},M=${max},q=document.getElementById('q'),tot=document.getElementById('tot'),lack=document.getElementById('lack'),lk=document.getElementById('lk'),bb=document.getElementById('bb'),f=document.getElementById('bf'),cp=document.getElementById('cp');
 function n(){var v=q?parseInt(q.value,10):1;if(!(v>=1))v=1;if(v>M)v=M;return v}
 function fmt(x){return x.toLocaleString('ko-KR')+'P'}
-function upd(){var v=n(),t=P*v;tot.textContent=fmt(t);if(t>B&&!(cp&&cp.value.trim())){lack.hidden=false;lk.textContent=fmt(t-B);bb.disabled=true;bb.textContent='포인트가 부족해요'}else{lack.hidden=true;bb.disabled=false;bb.textContent=(M>1||v>1?v+'개 ':'')+fmt(t)+' 구매하기'}}
+function U(v){return BK&&v>=BK?Math.floor(P*(100-BP)/100):P}
+function upd(){var v=n(),t=U(v)*v;tot.textContent=fmt(t);if(t>B&&!(cp&&cp.value.trim())){lack.hidden=false;lk.textContent=fmt(t-B);bb.disabled=true;bb.textContent='포인트가 부족해요'}else{lack.hidden=true;bb.disabled=false;bb.textContent=(M>1||v>1?v+'개 ':'')+fmt(t)+' 구매하기'}}
 if(q){q.addEventListener('input',function(){if(q.value!==''){q.value=n()}upd()});q.addEventListener('blur',function(){q.value=n();upd()});
 document.getElementById('mi').onclick=function(){q.value=Math.max(1,n()-1);upd()};document.getElementById('pl').onclick=function(){q.value=Math.min(M,n()+1);upd()};
 Array.prototype.forEach.call(document.querySelectorAll('[data-add]'),function(b){b.onclick=function(){q.value=Math.min(M,n()+parseInt(b.dataset.add,10));upd()}});
 Array.prototype.forEach.call(document.querySelectorAll('[data-set]'),function(b){b.onclick=function(){q.value=Math.min(M,parseInt(b.dataset.set,10));upd()}})}
-f.onsubmit=function(){var v=n();if(q)q.value=v;return confirm(fmt(P*v)+'를 사용해 '+(v>1?v+'개를 ':'')+'구매할까요?')};if(cp)cp.addEventListener('input',upd);upd()})();</script>`;
+f.onsubmit=function(){var v=n();if(q)q.value=v;return confirm(fmt(U(v)*v)+'를 사용해 '+(v>1?v+'개를 ':'')+'구매할까요?')};if(cp)cp.addEventListener('input',upd);upd()})();</script>`;
 };
 const payBlock = (item, shop) => {
   const hasDep = !!(shop && shop.bank && shop.account);
@@ -1245,7 +1249,7 @@ async function abuseHit(shop, uid, kind) {
 }
 
 // ----- 운영 도구: 매출 통계 대시보드 -----
-function salesDashboard(orders, items) {
+function salesDashboard(orders, items, isPro = false) {
   const KST = 9 * 3600e3, D = 86400000, now = Date.now();
   const dk = (t) => Math.floor((Number(t) + KST) / D), today = dk(now);
   const byDay = new Map();
@@ -1268,13 +1272,33 @@ function salesDashboard(orders, items) {
   const top = [...per].sort((a, b) => b[1].sum - a[1].sum).slice(0, 5);
   const cnt = new Map(); for (const x of orders) if (x.buyer) cnt.set(x.buyer, (cnt.get(x.buyer) || 0) + 1);
   const buyers = cnt.size, repeat = [...cnt.values()].filter((n) => n >= 2).length, rate = buyers ? Math.round(repeat / buyers * 100) : 0;
+  let patternCard;
+  if (!isPro) patternCard = '<div class="card"><b>요일·시간대별 매출</b><p class="sub" style="margin:6px 0 0">🔒 언제 제일 잘 팔리는지 보여주는 이 통계는 Pro에서 쓸 수 있어요.</p></div>';
+  else {
+    const since = now - 90 * D, wd = Array.from({ length: 7 }, () => ({ sum: 0, n: 0 })), hr = Array.from({ length: 24 }, () => ({ sum: 0, n: 0 }));
+    let cntN = 0;
+    for (const x of orders) {
+      if (Number(x.paidAt) < since) continue;
+      const dt = new Date(Number(x.paidAt) + KST), w = (dt.getUTCDay() + 6) % 7, h = dt.getUTCHours(), p = Number(x.price) || 0, q = orderQty(x);
+      wd[w].sum += p; wd[w].n += q; hr[h].sum += p; hr[h].n += q; cntN += q;
+    }
+    const names = ['월', '화', '수', '목', '금', '토', '일'];
+    const best = (arr) => arr.reduce((b, a, i) => (a.sum > arr[b].sum ? i : b), 0);
+    const wmax = Math.max(1, ...wd.map((x) => x.sum)), hmax = Math.max(1, ...hr.map((x) => x.sum));
+    const wRows = wd.map((a, i) => `<div style="display:flex;align-items:center;gap:8px;margin:5px 0;font-size:13px"><span style="width:18px">${names[i]}</span><div style="flex:1;background:#eee;border-radius:6px;height:14px"><div style="width:${Math.round(a.sum / wmax * 100)}%;height:100%;background:#18181b;border-radius:6px"></div></div><span style="min-width:100px;text-align:right">${won(a.sum)} · ${a.n}건</span></div>`).join('');
+    const hBars = `<div style="display:flex;align-items:flex-end;gap:2px;height:90px;margin-top:12px">${hr.map((a, i) => `<div style="flex:1;height:100%;display:flex;flex-direction:column;justify-content:flex-end" title="${i}시 ${won(a.sum)} · ${a.n}건"><div style="height:${Math.max(a.sum ? 4 : 1, Math.round(a.sum / hmax * 100))}%;background:#18181b;border-radius:3px 3px 0 0;opacity:.75"></div></div>`).join('')}</div><div style="display:flex;justify-content:space-between" class="sub"><span>0시</span><span>6시</span><span>12시</span><span>18시</span><span>23시</span></div>`;
+    patternCard = cntN
+      ? `<div class="card"><b>요일·시간대별 매출 <span class="sub">(최근 90일)</span></b><p class="sub" style="margin:6px 0 8px">💡 가장 잘 팔리는 요일은 <b>${names[best(wd)]}요일</b>, 시간대는 <b>${best(hr)}시</b>예요. 이벤트나 신상품은 이 시간 전에 열어 보세요.</p>${wRows}${hBars}</div>`
+      : '<div class="card"><b>요일·시간대별 매출</b><p class="sub" style="margin:6px 0 0">최근 90일 판매가 아직 없어요</p></div>';
+  }
   const box = (t, a) => `<div class="card" style="margin:0"><span class="sub">${t}</span><br><b style="font-size:20px">${won(a.s)}</b><br><span class="sub">${a.n}건</span></div>`;
   return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">${box('오늘', t1)}${box('최근 7일', t7)}${box('최근 30일', t30)}</div>
 <div class="card"><b>최근 14일 매출</b>${bars}</div>
 <div class="card"><b>주간 매출 (월~일)</b>${weeks.map((w) => line(w.t, w)).join('')}</div>
 <div class="card"><b>월간 매출</b>${months.map((w) => line(w.t, w)).join('')}</div>
 <div class="card"><b>인기 상품 TOP 5</b>${top.map(([id, a], n) => line((n + 1) + '. ' + (nameOf.get(id) || '삭제된 상품'), a)).join('') || '<p class="sub">아직 판매가 없어요</p>'}</div>
-<div class="card"><b>재구매율 ${rate}%</b><p class="sub" style="margin:6px 0 0">구매자 ${buyers}명 중 ${repeat}명이 2번 이상 샀어요 (구매자 정보가 있는 주문 기준)</p></div>`;
+<div class="card"><b>재구매율 ${rate}%</b><p class="sub" style="margin:6px 0 0">구매자 ${buyers}명 중 ${repeat}명이 2번 이상 샀어요 (구매자 정보가 있는 주문 기준)</p></div>
+${patternCard}`;
 }
 
 // ----- 기간 한정 세일 (Plus): 세일 기간에는 상품 가격이 자동으로 세일가로 보이고, 끝나면 원래 가격으로 돌아와요 -----
@@ -1342,19 +1366,95 @@ const noticeBanner = (shop) => {
   return `<div style="background:${c};color:#fff;padding:12px 14px;border-radius:16px;margin:0 0 14px;font-weight:700;font-size:14px;line-height:1.5">${esc(nb.text)}</div>`;
 };
 
+// ----- 주간 매출 리포트 (Pro): 매주 월요일 오전 9시(한국) 이후 지난주 매출·전주 대비·인기 상품을 주인에게 푸시 -----
+function weeklyStats(orders, now = Date.now()) {
+  const KST = 9 * 3600e3, D = 86400000, dk = (t) => Math.floor((Number(t) + KST) / D), today = dk(now), mon = today - ((today + 3) % 7); // 이번 주 월요일
+  const sum = (a, b) => { let sm = 0, n = 0; for (const x of orders) { const d = dk(x.paidAt); if (d >= a && d < b) { sm += Number(x.price) || 0; n += orderQty(x); } } return { s: sm, n }; };
+  const per = new Map(); for (const x of orders) { const d = dk(x.paidAt); if (d >= mon - 7 && d < mon) per.set(x.item, (per.get(x.item) || 0) + (Number(x.price) || 0)); }
+  const top = [...per].sort((a, b) => b[1] - a[1])[0];
+  return { last: sum(mon - 7, mon), prev: sum(mon - 14, mon - 7), topId: top ? top[0] : null, weekKey: mon };
+}
+async function weeklyReport(shop, force = false) {
+  const fresh = await store.shopById(shop.id); if (!fresh || !fresh.owner) return false;
+  const o = shopOpts(fresh);
+  const items = await store.itemsByShop(fresh.id), orders = await store.ordersForItems(items.map((i) => i.id));
+  const w = weeklyStats(orders);
+  if (!force && o.weeklyAt === w.weekKey) return false; // 이번 주에는 이미 보냈어요
+  const name = (items.find((i) => i.id === w.topId) || {}).title, diff = w.prev.s ? Math.round((w.last.s - w.prev.s) / w.prev.s * 100) : null;
+  const body = w.last.n ? `${won(w.last.s)}${diff == null ? '' : ` (전주 대비 ${diff >= 0 ? '+' : ''}${diff}%)`} · ${w.last.n}건${name ? ' · 인기: ' + name : ''}` : '지난주는 판매가 없었어요';
+  await pushToUser(fresh.owner, { title: `📊 ${fresh.name} 지난주 매출`, body, url: `/m/${fresh.key}#pstats` });
+  if (!force) { o.weeklyAt = w.weekKey; await saveOpts(fresh, o); }
+  return true;
+}
+async function weeklyReportJob() {
+  const k = new Date(Date.now() + 9 * 3600e3);
+  if ((k.getUTCDay() + 6) % 7 !== 0 || k.getUTCHours() < 9) return; // 월요일 오전 9시 이후에만
+  for (const sh of await store.shopsWithOpts()) {
+    try { if (sh.deleted || shopOpts(sh).weekly === false || !(await proOnly(sh))) continue; await weeklyReport(sh); }
+    catch (e) { console.error('주간 리포트 실패', sh.id, e.message); }
+  }
+}
+
+// ----- 충전 보너스 이벤트 (Pro): 충전 신청 시각이 이벤트 기간 안이면 입금 확인 때 보너스 포인트를 같이 지급 -----
+const bonusRule = (shop) => { if (!shop || shop._plan !== 'pro') return null; const b = shopOpts(shop).bonus; return b && Number(b.pct) > 0 ? b : null; }; // { pct, from, until, min }
+const bonusActive = (b, t = Date.now()) => !!b && t >= (Number(b.from) || 0) && Number(b.until) > t;
+const bonusBanner = (shop) => { const b = bonusRule(shop); return b && bonusActive(b) ? `<div class="nt">🎁 <b>충전 보너스 +${Number(b.pct)}%</b> · ${esc(fmtKST(b.until))}까지${Number(b.min) ? ` · ${Number(b.min).toLocaleString('ko-KR')}원 이상 충전할 때` : ''}<br><span class="sm">이벤트 기간에 충전을 신청하면, 입금이 확인될 때 보너스 포인트가 같이 들어와요.</span></div>` : ''; };
+// ----- 묶음 할인 (Pro): N개 이상 사면 개당 추가 할인 (포인트 구매) -----
+const bulkRule = (shop) => { if (!shop || shop._plan !== 'pro') return null; const b = shopOpts(shop).bulk; return b && Number(b.min) >= 2 && Number(b.pct) >= 1 ? { min: Number(b.min), pct: Number(b.pct) } : null; };
+// ----- 상품 일괄 등록 (Pro): CSV -----
+function parseCsv(text) {
+  const t = String(text).replace(/^\ufeff/, ''), rows = []; let row = [], cell = '', q = false;
+  for (let i = 0; i < t.length; i++) {
+    const c = t[i];
+    if (q) { if (c === '"') { if (t[i + 1] === '"') { cell += '"'; i++; } else q = false; } else cell += c; }
+    else if (c === '"' && cell === '') q = true;
+    else if (c === ',') { row.push(cell); cell = ''; }
+    else if (c === '\n' || c === '\r') { if (c === '\r' && t[i + 1] === '\n') i++; row.push(cell); cell = ''; if (row.some((x) => x.trim() !== '')) rows.push(row); row = []; }
+    else cell += c;
+  }
+  row.push(cell); if (row.some((x) => x.trim() !== '')) rows.push(row);
+  return rows;
+}
+const bulkCard = (shop) => `<h2>📦 상품 일괄 등록 <span class="tag paid">Pro</span></h2>
+<form class="card" method="post" action="/m/${shop.key}/items/bulk">
+<p class="sub" style="margin:0 0 8px">엑셀에서 만든 CSV를 올리거나 붙여넣으면 한꺼번에 등록돼요. 한 번에 200개까지예요.<br>열 순서: <b>제목, 가격, 설명, 잠금정보, 재고(여러 개는 | 로 구분), 공개(Y/N)</b> · 공개는 비우면 Y예요. <a href="/m/${shop.key}/items/bulk-template.csv">양식 받기(CSV)</a></p>
+<input type="file" id="bkf" accept=".csv,text/csv,text/plain"><textarea name="csv" id="bkt" rows="6" placeholder="제목,가격,설명,잠금정보,재고,공개&#10;예시 상품,5000,설명이에요,,KEY-1|KEY-2,Y" required></textarea>
+<button>일괄 등록</button></form>
+<script>(function(){var f=document.getElementById('bkf'),t=document.getElementById('bkt');if(!f)return;f.onchange=function(){var file=f.files[0];if(!file)return;var r=new FileReader();r.onload=function(){var b=r.result,s;try{s=new TextDecoder('utf-8',{fatal:true}).decode(b)}catch(e){try{s=new TextDecoder('euc-kr').decode(b)}catch(e2){s=new TextDecoder('utf-8').decode(b)}}t.value=s};r.readAsArrayBuffer(file)}})();</script>`;
+
 // ----- 관리 화면의 라이센스 탭 2개 (매출 통계 · 라이센스 혜택) -----
 async function proTabsHtml(shop, ctx) {
   const { ownerU, items, orders, ownerView } = ctx;
   const plan = planOf(ownerU), pro = plan !== 'lite', isPro = plan === 'pro', cap = isPro ? 20 : 10;
   const o = shopOpts(shop), t = o.theme || {};
   const lock = '<div class="card"><b>🔒 Plus 이상이 필요해요</b><p class="sub">상점 주인이 Plus나 Pro를 쓰면 쓸 수 있어요. 내 상점 화면에서 구독하거나 키를 등록해요.</p></div>';
+  const exportForm = pro ? `<form class="card" method="get" action="/m/${shop.key}/export.csv"><b>📥 매출·주문 엑셀(CSV) 내보내기</b><p class="sub" style="margin:6px 0 8px">기간과 상품을 고르면 엑셀에서 바로 열리는 CSV 파일을 받아요. (지급된 키·계정 내용은 들어 있지 않아요)</p><div class="row"><input type="date" name="from"><input type="date" name="to"></div><select name="item" style="${SEL_STYLE}"><option value="">전체 상품</option>${items.map((i) => `<option value="${esc(i.id)}">${esc(i.title)}</option>`).join('')}</select><button>CSV 받기</button></form>` : '';
   const stats = `<!--TAB:pstats::매출 통계-->
 <h2>매출 통계 대시보드</h2>
-${pro ? salesDashboard(orders, items) : lock}`;
+${pro ? exportForm + salesDashboard(orders, items, isPro) : lock}`;
   if (!pro) return stats + `<!--TAB:pro::라이센스 혜택-->
 <h2>라이센스 혜택</h2>${lock}<div class="card"><p class="sub" style="margin:0">Plus: 매출 통계, 쿠폰 10개, 테마 색상·로고·배너, 예약 판매·공개, 상점 4개, 만료 임박 알림 · Pro: 쿠폰 20개, 직원 계정, 전용 주소·PRO 뱃지, 어뷰징 자동 차단, 자동 충전, 상점 5개</p></div>`;
   const coupons = couponList(shop), staff = o.staff || [], blog = o.blog || [];
   const nb = o.nb || {}, nbOn = !!(nb.text && (!nb.until || Date.now() < nb.until));
+  const weeklyOn = o.weekly !== false;
+  const bk = o.bulk || {}, bn = o.bonus || {}, bnOn = bonusActive(bn);
+  const promoForms = !isPro ? '<h2>충전 보너스·묶음 할인</h2><p class="sub">🔒 Pro에서 쓸 수 있어요.</p>' : `<h2>충전 보너스 이벤트</h2>
+<form class="card" method="post" action="/m/${shop.key}/bonus"><b>${bnOn ? `진행 중: +${Number(bn.pct)}% (${esc(fmtKST(bn.until))}까지)` : '진행 중인 이벤트가 없어요'}</b>
+<input name="pct" type="number" inputmode="numeric" min="1" max="100" value="${bnOn ? Number(bn.pct) : ''}" placeholder="보너스 % (예: 10)" style="margin-top:8px">
+<input name="days" type="number" inputmode="numeric" min="1" max="90" placeholder="이벤트 기간 (일, 지금부터)">
+<input name="min" type="number" inputmode="numeric" min="0" max="500000" value="${bnOn && bn.min ? Number(bn.min) : ''}" placeholder="최소 충전 금액 (선택)">
+<button>이벤트 시작·변경</button><button name="off" value="1" style="background:#6b7280;margin-top:8px">이벤트 끝내기</button>
+<p class="sub">충전 신청 시각이 이벤트 기간 안이면, 입금이 확인될 때 보너스 포인트가 같이 지급돼요. 충전 화면과 상점 맨 위에 안내가 떠요.</p></form>
+<h2>묶음 할인</h2>
+<form class="card" method="post" action="/m/${shop.key}/bulk"><b>${Number(bk.min) >= 2 ? `${Number(bk.min)}개 이상 개당 ${Number(bk.pct)}% 할인 중` : '꺼져 있어요'}</b>
+<div class="row" style="margin-top:8px"><input name="min" type="number" inputmode="numeric" min="2" max="100" value="${Number(bk.min) >= 2 ? Number(bk.min) : ''}" placeholder="몇 개 이상? (2~100)"><input name="pct" type="number" inputmode="numeric" min="1" max="50" value="${Number(bk.min) >= 2 ? Number(bk.pct) : ''}" placeholder="개당 할인 % (1~50)"></div>
+<button>저장</button><button name="off" value="1" style="background:#6b7280;margin-top:8px">끄기</button>
+<p class="sub">포인트로 한 번에 정해진 개수 이상 사면 개당 가격에서 추가로 깎아줘요. 칭호 할인·쿠폰과 같이 쓸 수 있어요.</p></form>`;
+  const weeklyForm = !isPro ? '<h2>주간 매출 리포트</h2><p class="sub">🔒 Pro에서 쓸 수 있어요.</p>' : !ownerView ? '' : `<h2>주간 매출 리포트</h2>
+<form class="card" method="post" action="/m/${shop.key}/weekly"><b>${weeklyOn ? '켜져 있어요' : '꺼져 있어요'}</b>
+<p class="sub">매주 월요일 오전 9시(한국) 이후, 지난주 매출·전주 대비·인기 상품을 푸시로 보내드려요. (내 상점 화면에서 푸시 알림을 켜 두세요)</p>
+<input type="hidden" name="on" value="${weeklyOn ? '0' : '1'}"><button${weeklyOn ? ' style="background:#6b7280"' : ''}>${weeklyOn ? '끄기' : '켜기'}</button></form>
+<form method="post" action="/m/${shop.key}/weekly/test"><button style="background:#4b5563">지금 미리 받아보기</button></form>`;
   const extraForms = `<h2>공지 배너</h2>
 <form class="card" method="post" action="/m/${shop.key}/nbanner"><b>상점 맨 위 배너 ${nbOn ? '<span class="sub">(노출 중)</span>' : ''}</b>
 <input name="text" value="${esc(nb.text || '')}" placeholder="예) 🎉 이번 주말 전 상품 10% 할인!" maxlength="100" style="margin-top:8px">
@@ -1391,6 +1491,8 @@ ${staff.map((x) => { const pm = staffPerms(x); return `<div class="card"><b>회�
 <div class="card"><b>✨ ${PLAN_NAME[plan]} 적용 중</b><p class="sub" style="margin:6px 0 0">${isAdmin(ownerU) ? '운영자 상점이에요' : `${fmtDay(isPro ? ownerU.license_until : ownerU.plus_until)}까지`} · 상점 ${PLAN_SHOPS[plan]}개 · 예약 판매·공개(상품 등록·수정에서 설정) · 만료 임박 알림(7일·3일·1일 전)</p></div>
 ${design}
 ${extraForms}
+${weeklyForm}
+${promoForms}
 <h2>쿠폰 (${coupons.length}/${cap})</h2>
 <form class="card" method="post" action="/m/${shop.key}/coupons">
 <input name="code" placeholder="쿠폰 코드 (영문 대문자·숫자 4~20자)" required maxlength="20" autocomplete="off" autocapitalize="characters" style="text-transform:uppercase">
@@ -1457,6 +1559,13 @@ async function confirmCharge(ch) {
   const bal = await store.addShopPoints(ch.user_id, ch.shop, Number(ch.amount));
   if (bal == null) { console.error('충전 지급 실패', ch.token); return false; }
   await store.addLedger({ id: rid(9), user_id: ch.user_id, shop: ch.shop, delta: Number(ch.amount), kind: 'charge', ref: ch.token, note: '충전', created: Date.now() });
+  try { // 충전 보너스 이벤트 (Pro)
+    const sh = await store.shopById(ch.shop), b = bonusRule(sh);
+    if (b && bonusActive(b, Number(ch.created) || Date.now()) && Number(ch.amount) >= (Number(b.min) || 0)) {
+      const bonus = Math.floor(Number(ch.amount) * Number(b.pct) / 100);
+      if (bonus > 0 && (await store.addShopPoints(ch.user_id, ch.shop, bonus)) != null) await store.addLedger({ id: rid(9), user_id: ch.user_id, shop: ch.shop, delta: bonus, kind: 'bonus', ref: ch.token, note: `충전 보너스 +${Number(b.pct)}%`, created: Date.now() });
+    }
+  } catch (e) { console.error('충전 보너스 지급 실패', e.message); }
   return true;
 }
 // 꺼낸 재고 한 줄을 되돌림
@@ -2223,6 +2332,7 @@ ${can('points') ? `<h2>포인트 직접 조정</h2>
 <a class="btn" href="/m/${shop.key}/sales" style="margin-bottom:10px">🔍 전체 판매내역 검색 (옛날 주문 포함)</a>
 ${recent.map((o) => { const bc = o.buyer ? String(o.buyer).slice(0, 8) : ''; return `<div class="card tcard"><div class="row"><div style="flex:1;min-width:0"><b>${esc(titleOfItem.get(o.item) || '삭제된 상품')}</b><br><span class="sub">${won(o.price)} · ${fmtDate(o.paidAt)}<br>구매자 ${bc ? esc(bc) : '미연결'}</span></div>${bc && can('block') ? (blockedIds.includes(o.buyer) ? '<span class="sub">차단됨</span>' : `<form method="post" action="/m/${shop.key}/blocks" onsubmit="return confirm('이 회원을 차단할까요?')" style="margin:0"><input type="hidden" name="code" value="${esc(bc)}"><button style="width:auto;padding:8px 14px;font-size:13px;background:#dc2626;border-radius:12px">차단</button></form>`) : ''}</div></div>`; }).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
 <!--TAB:items::상품-->
+${can('stock') ? (ownerU && planOf(ownerU) === 'pro' ? bulkCard(shop) : '<p class="sub">📦 상품 일괄 등록(CSV)은 Pro에서 쓸 수 있어요.</p>') : ''}
 ${can('stock') ? `<h2>아이템 추가</h2>
 <form class="card" method="post" action="/m/${shop.key}/items">
 <input name="title" placeholder="제목" required maxlength="80">
@@ -2369,6 +2479,33 @@ ${proE ? `<form method="post" action="/m/${shop.key}/items/${item.id}/copy" onsu
 <h2>삭제</h2>
 ${sold ? '<p class="sub">판매 기록이 있는 아이템은 삭제할 수 없어요. 구매자가 계속 열람해야 하니까요. 대신 위에서 공개를 꺼서 목록에서 숨기세요.</p>'
  : `<form method="post" action="/m/${shop.key}/items/${item.id}/delete" onsubmit="return confirm('정말 삭제할까요? 되돌릴 수 없어요.')"><button style="background:#dc2626">이 아이템 삭제</button></form>`}`));
+});
+
+// (아래 '상품 수정' 경로가 /items/bulk 를 먼저 가로채지 않도록 일괄 등록을 앞에 둬요)
+route('POST', /^\/m\/([\w-]+)\/items\/bulk$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'items');
+  if (!shop) return;
+  if (shop._perms && !shop._perms.includes('stock')) return send(res, 403, page('권한 없음', '<h1>상품을 올리려면 "재고·잠금 정보" 권한이 필요해요</h1>'));
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
+  const f = await readForm(req);
+  const back = `<p><a href="/m/${shop.key}#items">← 상품 관리로</a></p>`;
+  let rows = parseCsv(String(f.csv || '').slice(0, 400000));
+  if (rows.length && /^(제목|title)$/i.test(String(rows[0][0] || '').trim())) rows.shift();
+  if (!rows.length) return send(res, 400, page('일괄 등록', `<h1>등록할 줄이 없어요</h1>${back}`));
+  if (rows.length > 200) return send(res, 400, page('일괄 등록', `<h1>한 번에 200개까지 올릴 수 있어요 (지금 ${rows.length}줄)</h1>${back}`));
+  let made = 0; const skipped = [];
+  for (let i = 0; i < rows.length; i++) {
+    const r = rows[i], no = i + 1, title = String(r[0] || '').trim().slice(0, 80), price = parseInt(String(r[1] || '').replace(/[,\s원]/g, ''), 10);
+    const secret = String(r[3] || '').slice(0, 10000), stock = parseStock(String(r[4] || '').split('|').join('\n'));
+    const pub = !/^(n|no|0|false|비공개|아니오)$/i.test(String(r[5] || '').trim());
+    if (!title) { skipped.push(`${no}번째 줄: 제목이 비어 있어요`); continue; }
+    if (!(price >= 100 && price <= 10000000)) { skipped.push(`${no}번째 줄 (${title}): 가격은 100원 이상이어야 해요`); continue; }
+    if (!secret.trim() && !stock) { skipped.push(`${no}번째 줄 (${title}): 잠금정보나 재고 중 하나는 있어야 해요`); continue; }
+    const item = { id: rid(9), shop: shop.id, pub, title, price, preview: String(r[2] || '').slice(0, 2000), secret, created: Date.now() };
+    if (stock) item.stock = stock;
+    try { await store.createItem(item); made++; } catch (e) { console.error('일괄 등록 실패', e.message); skipped.push(`${no}번째 줄 (${title}): 저장하지 못했어요`); }
+  }
+  send(res, 200, page('일괄 등록', `<h1>${made}개 등록했어요</h1>${skipped.length ? `<div class="warn"><b>${skipped.length}줄은 건너뛰었어요</b><br>${skipped.slice(0, 50).map(esc).join('<br>')}</div>` : ''}${back}`));
 });
 
 route('POST', /^\/m\/([\w-]+)\/items\/([\w-]+)$/, async (req, res, m) => {
@@ -2610,7 +2747,8 @@ const buyHandler = async (req, res, m) => {
     if (have + qty > limB) return send(res, 400, page('구매 한도', `<h1>인당 구매 한도를 넘어요</h1><p class="sub">이 상품은 한 사람이 ${limB}개까지 살 수 있어요. 지금까지 ${have}개 샀고, ${Math.max(0, limB - have)}개 더 살 수 있어요.</p><p><a href="/i/${item.id}">돌아가기</a></p>`));
   }
   const discB = await discountOf(u.id, item.shop);
-  const unit = discPrice(item.price, discB);
+  let unit = discPrice(item.price, discB);
+  const bkB = bulkRule(shopB); if (bkB && qty >= bkB.min) unit = discPrice(unit, bkB.pct); // 묶음 할인 (Pro)
   let total = unit * qty;
   let cpUsed = null;
   const cpCode = str(f.coupon, 24).toUpperCase();
@@ -2882,14 +3020,14 @@ route('GET', /^\/w\/([\w-]+)$/, async (req, res, m) => {
   const bal = await store.shopPoints(u.id, shop.id);
   const pending = (await store.userShopCharges(u.id, shop.id)).filter((c) => Date.now() <= c.created + CHARGE_TTL);
   const lq = (q.get('lq') || '').trim().slice(0, 30); // 내역 검색어
-  const label = { sub: '구독', charge: '충전', buy: '구매', admin: '상점 조정', payback: '페이백', reserve: '예약 (선결제)', reserve_cancel: '예약 취소 (환불)' };
+  const label = { bonus: '충전 보너스', sub: '구독', charge: '충전', buy: '구매', admin: '상점 조정', payback: '페이백', reserve: '예약 (선결제)', reserve_cancel: '예약 취소 (환불)' };
   let log = await store.ledgerForUserShop(u.id, shop.id, lq ? 1000 : 30); // 검색할 땐 더 옛날 것까지 찾아봐요
   if (lq) { const w = lq.toLowerCase(); log = log.filter((l) => `${label[l.kind] || l.kind} ${l.note || ''} ${fmtDate(l.created)} ${Math.abs(Number(l.delta) || 0)} ${Number(l.delta) || 0}`.toLowerCase().includes(w)); }
   send(res, 200, page(shop.name + ' 포인트', `<a class="sub" href="/s/${shop.id}">← ${esc(shop.name)}</a><h1>${esc(shop.name)} 포인트</h1>
 ${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
 <div class="card"><span class="sub">보유 포인트 (1P = 1원 · 이 상점에서만 사용)</span><br><span class="price" style="font-size:28px">${pts(bal)}</span></div>
 <h2>포인트 충전</h2>
-${canCharge ? `<form class="card" method="post" action="/w/${shop.id}/charge">
+${bonusBanner(shop)}${canCharge ? `<form class="card" method="post" action="/w/${shop.id}/charge">
 <input name="amount" type="number" min="${MIN_CHARGE}" max="${MAX_CHARGE}" step="100" placeholder="충전 금액 (${MIN_CHARGE.toLocaleString('ko-KR')}원 이상)" required>
 <input name="name" placeholder="입금자명 (은행 앱에 찍히는 내 이름)" required minlength="2" maxlength="20">
 <input type="hidden" name="image" id="cim"><div class="row" style="margin:0 0 10px"><label for="cif" style="display:inline-block;background:#f4f4f5;border-radius:12px;padding:8px 12px;font-size:13px;font-weight:700;cursor:pointer">입금 사진 (선택)</label><span id="cin" class="sub"></span></div><input type="file" id="cif" accept="image/*" style="display:none"><img id="cip" alt="" style="display:none;width:100%;max-height:200px;object-fit:contain;border-radius:12px;margin:0 0 10px">
@@ -3279,7 +3417,7 @@ route('GET', /^\/s\/([\w-]+)$/, async (req, res, m) => {
 <div class="rt">${ICO.star}<span>${rv ? (rv.sum / rv.n).toFixed(1) : '-'}</span>${rv ? `<span class="sm">(${rv.n})</span>` : ''}</div>
 <div class="pr"><span>${i.on_sale ? `<s class="sm">${won(i.base_price)}</s> ` : ''}<b>${i.on_sale ? '🔥 ' : ''}${won(i.price)}</b></span><span>재고: <b>${stockTxt}</b></span></div></div></a>`;
   };
-  send(res, 200, shopPage(shop, shop.name, bannerHtml(shop) + noticeBlock(siteN, '운영자 공지') + noticeBlock(shopN, '상점 공지') + (items.length ? PRODUCT_SEARCH_BOX + `<div class="pg">${items.map(card).join('')}</div>` + PRODUCT_SEARCH_JS : '<p class="sm"><i class="empty">비어 있어요</i></p>') + await titleRoster(shop), me, bal, '/s/' + shop.id, 'items', navGroups(shop, items)));
+  send(res, 200, shopPage(shop, shop.name, bannerHtml(shop) + bonusBanner(shop) + noticeBlock(siteN, '운영자 공지') + noticeBlock(shopN, '상점 공지') + (items.length ? PRODUCT_SEARCH_BOX + `<div class="pg">${items.map(card).join('')}</div>` + PRODUCT_SEARCH_JS : '<p class="sm"><i class="empty">비어 있어요</i></p>') + await titleRoster(shop), me, bal, '/s/' + shop.id, 'items', navGroups(shop, items)));
 });
 
 // 통계: 평점, 총 팔린 횟수, 이번 주(월~일) 날짜별 팔린 횟수 그래프, 상품별 판매
@@ -3849,6 +3987,90 @@ route('POST', /^\/m\/([\w-]+)\/nbanner$/, async (req, res, m) => {
   redirect(res, `/m/${shop.key}#pro`);
 });
 
+// ---------- 통계·정리 라우트: 엑셀(CSV) 내보내기 · 주간 리포트 ----------
+route('GET', /^\/m\/([\w-]+)\/export\.csv$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'orders');
+  if (!shop) return;
+  if (!(await proOk(shop))) return send(res, 403, needProPage(shop));
+  const q = new URL(req.url, BASE).searchParams;
+  const dayMs = (d, end) => { if (!/^\d{4}-\d{2}-\d{2}$/.test(d || '')) return null; const t = Date.parse(d + 'T00:00:00+09:00'); return Number.isFinite(t) ? t + (end ? 86400000 - 1 : 0) : null; };
+  const from = dayMs(String(q.get('from') || ''), false), to = dayMs(String(q.get('to') || ''), true), itemF = String(q.get('item') || '').slice(0, 40);
+  const items = await store.itemsByShop(shop.id), titleOf = new Map(items.map((i) => [i.id, i.title]));
+  let orders = await store.ordersForItems(items.filter((i) => !itemF || i.id === itemF).map((i) => i.id));
+  orders = orders.filter((o) => (from == null || Number(o.paidAt) >= from) && (to == null || Number(o.paidAt) <= to)).sort((a, b) => Number(a.paidAt) - Number(b.paidAt)).slice(0, 50000);
+  const csv = (v) => { v = String(v == null ? '' : v); if (/^[=+\-@\t\r]/.test(v)) v = "'" + v; return /[",\n\r]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }; // 엑셀 수식 주입 방지
+  const kst = (t) => new Date(Number(t)).toLocaleString('sv-SE', { timeZone: 'Asia/Seoul' });
+  const lines = [['주문번호', '주문시각(한국)', '상품', '수량', '결제금액(원)', '구매자(회원번호 앞 8자리)'].join(',')];
+  for (const o of orders) lines.push([o.token, kst(o.paidAt), titleOf.get(o.item) || '삭제된 상품', orderQty(o), Number(o.price) || 0, o.buyer ? String(o.buyer).slice(0, 8) : ''].map(csv).join(','));
+  lines.push(['합계', '', '', orders.reduce((a, o) => a + orderQty(o), 0), orders.reduce((a, o) => a + (Number(o.price) || 0), 0), ''].map(csv).join(','));
+  res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="orders.csv"; filename*=UTF-8''${encodeURIComponent('주문내역_' + shop.name + '.csv')}`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+  res.end('\ufeff' + lines.join('\r\n') + '\r\n'); // 맨 앞 BOM: 엑셀에서 한글이 깨지지 않게
+});
+
+route('POST', /^\/m\/([\w-]+)\/weekly$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], true);
+  if (!shop) return;
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
+  const f = await readForm(req);
+  const o = shopOpts(shop); o.weekly = f.on === '1';
+  try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
+  redirect(res, `/m/${shop.key}#pro`);
+});
+
+route('POST', /^\/m\/([\w-]+)\/weekly\/test$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], true);
+  if (!shop) return;
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
+  try { await weeklyReport(shop, true); } catch (e) { console.error('주간 리포트 미리 받기 실패', e.message); }
+  redirect(res, `/m/${shop.key}#pro`);
+});
+
+// ---------- Pro 프로모션 라우트: 충전 보너스 · 묶음 할인 · 상품 일괄 등록 ----------
+route('POST', /^\/m\/([\w-]+)\/bonus$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'promo');
+  if (!shop) return;
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
+  const f = await readForm(req);
+  const back = (msg) => send(res, 400, page('오류', `<h1>${esc(msg)}</h1><p><a href="/m/${shop.key}#pro">돌아가기</a></p>`));
+  const o = shopOpts(shop);
+  if (f.off === '1') delete o.bonus;
+  else {
+    const pct = parseInt(f.pct, 10), days = parseInt(f.days, 10), min = Math.max(0, Math.min(MAX_CHARGE, parseInt(f.min, 10) || 0));
+    if (!(pct >= 1 && pct <= 100)) return back('보너스는 1~100% 사이로 정해 주세요');
+    if (!(days >= 1 && days <= 90)) return back('이벤트 기간은 1~90일로 정해 주세요');
+    o.bonus = { pct, from: Date.now(), until: Date.now() + days * DAY, min };
+  }
+  try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
+  redirect(res, `/m/${shop.key}#pro`);
+});
+
+route('POST', /^\/m\/([\w-]+)\/bulk$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'promo');
+  if (!shop) return;
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
+  const f = await readForm(req);
+  const back = (msg) => send(res, 400, page('오류', `<h1>${esc(msg)}</h1><p><a href="/m/${shop.key}#pro">돌아가기</a></p>`));
+  const o = shopOpts(shop);
+  if (f.off === '1') delete o.bulk;
+  else {
+    const min = parseInt(f.min, 10), pct = parseInt(f.pct, 10);
+    if (!(min >= 2 && min <= 100)) return back('몇 개 이상인지 2~100 사이로 정해 주세요');
+    if (!(pct >= 1 && pct <= 50)) return back('할인은 1~50% 사이로 정해 주세요');
+    o.bulk = { min, pct };
+  }
+  try { await saveOpts(shop, o); } catch (e) { return send(res, 500, optsSqlPage(shop, e)); }
+  redirect(res, `/m/${shop.key}#pro`);
+});
+
+route('GET', /^\/m\/([\w-]+)\/items\/bulk-template\.csv$/, async (req, res, m) => {
+  const shop = await manageShop(req, res, m[1], false, 'items');
+  if (!shop) return;
+  if (!(await proOnly(shop))) return send(res, 403, needProPage(shop));
+  const body = '제목,가격,설명,잠금정보,재고(여러 개는 | 로 구분),공개(Y/N)\r\n예시 계정 상품,5000,설명이에요,,id1:pw1|id2:pw2|id3:pw3,Y\r\n예시 안내 상품,3000,"쉼표(,)가 있으면 따옴표로 감싸요",구매자에게 보여줄 안내 내용,,N\r\n';
+  res.writeHead(200, { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="bulk-template.csv"; filename*=UTF-8''${encodeURIComponent('상품_일괄등록_양식.csv')}`, 'Cache-Control': 'no-store' });
+  res.end('\ufeff' + body);
+});
+
 const PUBLIC = [
   ['GET', /^\/$/], ['GET', /^\/intro$/], ['GET', /^\/(favicon\.ico|apple-touch-icon\.png)$/], ['GET', /^\/(manifest\.json|sw\.js|badge\.png|icon-(192|512)\.png)$/], ['GET', /^\/login$/], ['POST', /^\/login$/],
   ['POST', /^\/signup(\/start|\/verify)?$/], ['POST', /^\/logout$/],
@@ -3879,3 +4101,5 @@ setTimeout(() => licExpiryJob().catch((e) => console.error('만료 알림 실패
 setInterval(() => licExpiryJob().catch((e) => console.error('만료 알림 실패', e.message)), 3600 * 1000);
 setTimeout(() => subRenewJob().catch((e) => console.error('구독 연장 작업 실패', e.message)), 90 * 1000);
 setInterval(() => subRenewJob().catch((e) => console.error('구독 연장 작업 실패', e.message)), 3600 * 1000);
+setTimeout(() => weeklyReportJob().catch((e) => console.error('주간 리포트 작업 실패', e.message)), 120 * 1000);
+setInterval(() => weeklyReportJob().catch((e) => console.error('주간 리포트 작업 실패', e.message)), 3600 * 1000);
