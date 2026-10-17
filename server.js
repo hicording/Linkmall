@@ -615,10 +615,39 @@ const navGroups = (shop, pubItems) => {
   if (rest.length) g.push({ name: '그 외', items: rest });
   return g;
 };
-const shopPage = (shop, title, body, me, bal, next, active = 'home', groups = [], curId = '') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/png" href="/favicon.ico?v=${ICON_VER}"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ICON_VER}"><link rel="manifest" href="/manifest.json?v=${ICON_VER}"><meta name="theme-color" content="#111111">${DARK_HEAD}<meta name="mobile-web-app-capable" content="yes"><title>${esc(title)}</title><style>${shopCss}</style>${themeCss(shop)}</head><body>${SPLASH}
-<div class="top"><button class="ib" type="button" onclick="document.body.classList.add('open')" aria-label="메뉴">${ICO.menu}</button><a class="tb" href="/s/${shop.id}">${logoImg(shop)}${esc(shop.name)}${proBadge(shop)}</a>${DARK_BTN}${me ? `<a class="chip" href="/w/${shop.id}">${pts(bal)}</a>` : `<a class="chip" href="/login?next=${enc(next)}">로그인</a>`}</div>
+// ---------- 큰 화면(패드·컴퓨터)용 배치: 폰 화면은 그대로, 넓어지면 칸을 늘리고 메뉴를 왼쪽에 고정해요 ----------
+const RESP_CSS = `
+@media (min-width:768px){
+ .main,.w{max-width:760px;padding-left:28px;padding-right:28px}
+ .p-stats .main{max-width:960px}
+ .main:has(.pg){max-width:960px}
+ .pg{grid-template-columns:repeat(3,1fr);gap:16px}
+ .sg{grid-template-columns:repeat(4,1fr)}
+ .top{padding-left:24px;padding-right:24px}
+}
+@media (hover:hover){
+ .pc{transition:transform .15s,box-shadow .15s}.pc:hover{transform:translateY(-3px);box-shadow:0 10px 24px rgba(0,0,0,.14)}
+ .nv:hover:not(.on){background:#f4f4f5}.card:hover{box-shadow:0 6px 18px rgba(0,0,0,.09)}
+}
+@media (min-width:1100px){
+ body{padding-left:300px}
+ .dr{transform:none!important;width:300px;border-right:1px solid #eee;z-index:30;transition:none}
+ .ov,.hb,.cb{display:none!important}
+ .main,.w{max-width:860px;padding:30px 36px 90px}
+ .p-stats .main{max-width:1080px}
+ .main:has(.pg){max-width:1080px}
+ .pg{gap:20px}
+}
+@media (min-width:1500px){
+ .p-stats .main{max-width:1320px}
+ .main:has(.pg){max-width:1320px}
+ .pg{grid-template-columns:repeat(4,1fr)}
+}
+`;
+const shopPage = (shop, title, body, me, bal, next, active = 'home', groups = [], curId = '') => `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/png" href="/favicon.ico?v=${ICON_VER}"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ICON_VER}"><link rel="manifest" href="/manifest.json?v=${ICON_VER}"><meta name="theme-color" content="#111111">${DARK_HEAD}<meta name="mobile-web-app-capable" content="yes"><title>${esc(title)}</title><style>${shopCss}${RESP_CSS}</style>${themeCss(shop)}</head><body class="p-${String(active).replace(/[^\w-]/g, '')}">${SPLASH}
+<div class="top"><button class="ib hb" type="button" onclick="document.body.classList.add('open')" aria-label="메뉴">${ICO.menu}</button><a class="tb" href="/s/${shop.id}">${logoImg(shop)}${esc(shop.name)}${proBadge(shop)}</a>${DARK_BTN}${me ? `<a class="chip" href="/w/${shop.id}">${pts(bal)}</a>` : `<a class="chip" href="/login?next=${enc(next)}">로그인</a>`}</div>
 <div class="ov" onclick="document.body.classList.remove('open')"></div>
-<nav class="dr"><div class="brand"><img src="${brandSrc(shop)}" alt=""><b>${esc(shop.name)}${proBadge(shop)}</b><button class="ib" type="button" style="background:none" onclick="document.body.classList.remove('open')" aria-label="닫기">${ICO.x}</button></div>
+<nav class="dr"><div class="brand"><img src="${brandSrc(shop)}" alt=""><b>${esc(shop.name)}${proBadge(shop)}</b><button class="ib cb" type="button" style="background:none" onclick="document.body.classList.remove('open')" aria-label="닫기">${ICO.x}</button></div>
 <a class="nv${active === 'stats' ? ' on' : ''}" href="/s/${shop.id}/stats">${ICO.chart}통계</a>
 <a class="nv" href="/w/${shop.id}">${ICO.coin}포인트 충전</a>
 <a class="nv" href="/s/${shop.id}/inquiry">${ICO.chat}문의하기</a>
@@ -659,10 +688,10 @@ const panelPage = (o, html) => {
   const nav = tabs.map((t) => `<a class="nv" href="#${t.id}" data-t="${t.id}">${t.icon ? `<i>${t.icon}</i>` : ''}${esc(t.label)}</a>`).join('');
   const links = (o.links || []).map((l) => `<a class="nv" href="${l.href}">${l.label}</a>`).join('');
   const chip = o.chip ? `<a class="chip" href="${o.chip.href}"${o.chip.aria ? ` aria-label="${o.chip.aria}"` : ''}>${o.chip.label}</a>` : '';
-  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/png" href="/favicon.ico?v=${ICON_VER}"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ICON_VER}"><link rel="manifest" href="/manifest.json?v=${ICON_VER}"><meta name="theme-color" content="#111111">${DARK_HEAD}<meta name="mobile-web-app-capable" content="yes"><title>${esc(o.title)}</title><style>${css}${PANEL_CSS}</style></head><body>${SPLASH}
-<div class="top"><button class="ib" type="button" onclick="document.body.classList.add('open')" aria-label="메뉴">${ICO.menu}</button><span class="logo">${esc(o.heading || o.title)}</span>${DARK_BTN}${chip}</div>
+  return `<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="icon" type="image/png" href="/favicon.ico?v=${ICON_VER}"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=${ICON_VER}"><link rel="manifest" href="/manifest.json?v=${ICON_VER}"><meta name="theme-color" content="#111111">${DARK_HEAD}<meta name="mobile-web-app-capable" content="yes"><title>${esc(o.title)}</title><style>${css}${PANEL_CSS}${RESP_CSS}</style></head><body class="p-panel">${SPLASH}
+<div class="top"><button class="ib hb" type="button" onclick="document.body.classList.add('open')" aria-label="메뉴">${ICO.menu}</button><span class="logo">${esc(o.heading || o.title)}</span>${DARK_BTN}${chip}</div>
 <div class="ov" onclick="document.body.classList.remove('open')"></div>
-<nav class="dr"><div class="brand"><img src="/apple-touch-icon.png?v=${ICON_VER}" alt=""><b>${esc(o.heading || o.title)}</b><button class="ib" type="button" style="background:none" onclick="document.body.classList.remove('open')" aria-label="닫기">${ICO.x}</button></div>
+<nav class="dr"><div class="brand"><img src="/apple-touch-icon.png?v=${ICON_VER}" alt=""><b>${esc(o.heading || o.title)}</b><button class="ib cb" type="button" style="background:none" onclick="document.body.classList.remove('open')" aria-label="닫기">${ICO.x}</button></div>
 ${nav}${links ? '<hr>' + links : ''}</nav>
 <div class="w">${pre}${tabs.map((t) => `<div class="tab" id="tab-${t.id}" hidden>${t.html}</div>`).join('')}</div>
 <script>(function(){var K='tab:'+${JSON.stringify(String(o.key || 'panel'))},tabs=[].slice.call(document.querySelectorAll('.tab')),navs=[].slice.call(document.querySelectorAll('.nv[data-t]'));if(!tabs.length)return;
@@ -1055,6 +1084,12 @@ const PLANS = { plus: { price: 3000, days: 30 }, pro: { price: 5000, days: 30 } 
 const SUB_SQL = 'alter table users add column if not exists plus_until bigint; alter table users add column if not exists sub_plan text;';
 const planOf = (u) => (!u ? 'lite' : isAdmin(u) ? 'pro' : Number(u.license_until) > Date.now() ? 'pro' : Number(u.plus_until) > Date.now() ? 'plus' : 'lite');
 const licActive = (u) => planOf(u) !== 'lite'; // Plus 이상
+// 기간 늘리기: Plus는 Pro가 끝난 뒤에 이어서 쓰도록 쌓아요 (Pro 기간이 있으면 그 뒤부터 30일). Pro를 더하면 남은 Plus는 그만큼 뒤로 밀려요
+const planExtend = (u, plan, days) => {
+  const now = Date.now(), ms = Number(days) * 86400000, lu = Number(u.license_until) || 0, pu = Number(u.plus_until) || 0;
+  if (plan === 'pro') { const out = { license_until: Math.max(now, lu) + ms }; if (pu > now) out.plus_until = pu + ms; return out; }
+  return { plus_until: Math.max(now, pu, lu > now ? lu : 0) + ms };
+};
 const shopLimit = (u) => (isAdmin(u) ? Infinity : Math.max(0, PLAN_SHOPS[planOf(u)] + Number(u.extra_shops || 0))); // 운영자가 사람마다 조절 (/admin) // 운영자가 사람마다 조절 (/admin)
 const stars = (n) => '★'.repeat(n) + '☆'.repeat(5 - n);
 const SEL_STYLE = 'width:100%;padding:12px;border:1px solid #d9dce1;border-radius:10px;font-size:15px;margin:4px 0 10px';
@@ -1545,7 +1580,8 @@ async function licExpiryJob() {
       const k = `${u.id}|${plan}|${t}|${days}`;
       if (licWarned.has(k)) continue;
       licWarned.set(k, 1);
-      const body = days === 1 ? `${PLAN_NAME[plan]}가 1일 안에 만료돼요. 만료되면 ${PLAN_NAME[plan]} 혜택이 멈춰요. 구독하거나 키를 등록해 연장하세요.` : `${PLAN_NAME[plan]}가 ${days}일 뒤 만료돼요. 구독하거나 키를 등록해 연장하세요.`;
+      const nextPlus = plan === 'pro' && Number(u.plus_until) > t;
+      const body = nextPlus ? `Pro가 ${days}일 뒤 끝나요. 이후에는 남은 Plus로 이어져요.` : days === 1 ? `${PLAN_NAME[plan]}가 1일 안에 만료돼요. 만료되면 ${PLAN_NAME[plan]} 혜택이 멈춰요. 구독하거나 키를 등록해 연장하세요.` : `${PLAN_NAME[plan]}가 ${days}일 뒤 만료돼요. 구독하거나 키를 등록해 연장하세요.`;
       await pushToUser(u.id, { title: '요금제 만료 임박', body, url: '/my' }).catch((e) => console.error('만료 알림 실패', e.message));
     }
   }
@@ -1647,9 +1683,8 @@ async function chargeSub(u, plan) {
   const ks = await keyShop(); if (!ks) return { err: '키 판매소를 찾을 수 없어요. 운영자에게 문의해 주세요' };
   const bal = await store.addShopPoints(u.id, ks.id, -P.price);
   if (bal == null) return { err: `키 판매소 포인트가 부족해요 (${won(P.price)} 필요)`, short: true };
-  const fld = plan === 'pro' ? 'license_until' : 'plus_until';
-  const until = Math.max(Date.now(), Number(u[fld]) || 0) + P.days * DAY;
-  try { await store.updateUser(u.id, { [fld]: until, sub_plan: plan }); }
+  const ext = planExtend(u, plan, P.days), until = plan === 'pro' ? ext.license_until : ext.plus_until;
+  try { await store.updateUser(u.id, { ...ext, sub_plan: plan }); }
   catch (e) { await store.addShopPoints(u.id, ks.id, P.price); throw e; }
   try { await store.addLedger({ id: rid(9), user_id: u.id, shop: ks.id, delta: -P.price, kind: 'sub', ref: plan, note: `${PLAN_NAME[plan]} 구독 ${P.days}일`, created: Date.now() }); } catch (e) { console.error('구독 내역 기록 실패', e.message); }
   if (plan === 'pro') await initProOpts(u.id);
@@ -1660,7 +1695,8 @@ async function subRenewJob() {
   const now = Date.now();
   for (const u of await store.usersWithSub()) {
     const plan = u.sub_plan; if (!PLANS[plan]) continue;
-    const until = Number(u[plan === 'pro' ? 'license_until' : 'plus_until']) || 0;
+    const lu = Number(u.license_until) || 0, pu = Number(u.plus_until) || 0;
+    const until = plan === 'pro' ? lu : Math.max(pu, lu > now ? lu : 0); // Plus 구독은 Pro 기간이 끝나는 때를 기준으로 (쓰지도 않는 Plus 요금이 미리 나가지 않게)
     if (until - now > DAY || subLocks.has(u.id)) continue; // 만료 하루 전부터 연장해요
     subLocks.add(u.id);
     try {
@@ -2101,9 +2137,9 @@ route('POST', /^\/my\/license$/, async (req, res) => {
   const lic = key ? await store.claimLicense(key, u.id) : null;
   if (!lic) { tr.n++; licTries.set(u.id, tr); return fail('없거나 이미 사용된 키예요'); }
   try {
-    const plan = key.startsWith('LP') ? 'plus' : 'pro', fld = plan === 'pro' ? 'license_until' : 'plus_until';
-    const until = Math.max(Date.now(), Number(u[fld]) || 0) + Number(lic.days) * 86400000;
-    await store.updateUser(u.id, { [fld]: until });
+    const plan = key.startsWith('LP') ? 'plus' : 'pro';
+    const ext = planExtend(u, plan, Number(lic.days)), until = plan === 'pro' ? ext.license_until : ext.plus_until;
+    await store.updateUser(u.id, ext);
     if (plan === 'pro') await initProOpts(u.id);
     redirect(res, `/my?m=${enc(`${PLAN_NAME[plan]} 이용권이 등록됐어요 (${fmtDay(until)}까지)`)}`);
   } catch (e) {
