@@ -1158,11 +1158,11 @@ async function withPro(s) {
 // ----- 꾸미기: 테마 색상 · 배너 · 로고 · 전용 주소 · PRO 뱃지 -----
 const HEX_RE = /^#[0-9a-fA-F]{6}$/;
 const textOn = (hex) => { const n = parseInt(hex.slice(1), 16); const r = n >> 16, g = (n >> 8) & 255, b = n & 255; return (r * 299 + g * 587 + b * 114) / 1000 > 165 ? '#18181b' : '#fff'; };
-const PRO_CSS = '.pro{display:inline-block;vertical-align:middle;margin-left:6px;padding:2px 7px;border-radius:999px;background:linear-gradient(135deg,#f59e0b,#f97316);color:#fff;font-size:10px;font-weight:800;letter-spacing:.5px}.tlogo{width:26px;height:26px;border-radius:8px;object-fit:cover;vertical-align:middle;margin-right:8px}.bnr{display:block;width:100%;aspect-ratio:3/1;object-fit:cover;border-radius:22px;margin:0 0 16px}';
+const PRO_CSS = '.pro{display:inline-block;vertical-align:middle;margin-left:6px;padding:.18em .6em;border-radius:999px;background:#18181b;color:#fff;font-size:.6em;line-height:1.3;font-weight:800;letter-spacing:.4px;position:relative;top:-.08em}.tlogo{width:26px;height:26px;border-radius:8px;object-fit:cover;vertical-align:middle;margin-right:8px}.bnr{display:block;width:100%;aspect-ratio:3/1;object-fit:cover;border-radius:22px;margin:0 0 16px}';
 const themeCss = (shop) => {
   if (!shop || !shop._pro) return '';
   const t = shopOpts(shop).theme || {}; let c = '';
-  if (HEX_RE.test(t.color || '')) { const k = t.color, fg = textOn(k); c = `.nv.on{background:${k};color:${fg};box-shadow:0 10px 22px ${k}55}.bb:not([disabled]){background:${k};color:${fg}}.chip{background:${k};color:${fg}}.top{border-bottom:2px solid ${k}}`; }
+  if (HEX_RE.test(t.color || '')) { const k = t.color, fg = textOn(k); c = `.nv.on{background:${k};color:${fg};box-shadow:0 10px 22px ${k}55}.bb:not([disabled]){background:${k};color:${fg}}.chip{background:${k};color:${fg}}.pro{background:${k};color:${fg}}.top{border-bottom:2px solid ${k}}`; }
   return `<style>${PRO_CSS}${c}</style>`;
 };
 const proBadge = (shop) => (shop && shop._plan === 'pro' && shopOpts(shop).badge !== false ? '<span class="pro">PRO</span>' : '');
