@@ -221,6 +221,7 @@ const sbStore = {
     return (await r.json()).length > 0;
   },
   async ledgerForUser(uid) { return sbGet('ledger', `user_id=eq.${enc(uid)}&select=*&order=created.desc&limit=30`); },
+  async ledgerByKind(kind, since, n = 5000) { return sbGet('ledger', `kind=eq.${enc(kind)}&created=gte.${Number(since)}&select=*&order=created.desc&limit=${Number(n) || 5000}`); },
   async createTitle(t) { await sbInsert('titles', t); },
   async titlesByShop(shopId) { return sbGet('titles', `shop=eq.${enc(shopId)}&select=*&order=created.asc`); },
   async titleById(id) { return (await sbGet('titles', `id=eq.${enc(id)}&select=*`))[0]; },
@@ -399,6 +400,7 @@ const fileStore = {
   async updateResv(id, f) { const d = L(); if (d.reservations[id]) Object.assign(d.reservations[id], f); save(d); },
   async claimResv(id, from, to) { const d = L(); const r = d.reservations[id]; if (!r || r.status !== from) return false; r.status = to; save(d); return true; },
   async ledgerForUser(uid) { return L().ledger.filter((l) => l.user_id === uid).sort((a, b) => b.created - a.created).slice(0, 30); },
+  async ledgerByKind(kind, since, n = 5000) { return L().ledger.filter((x) => x.kind === kind && Number(x.created) >= Number(since)).sort((a, b) => b.created - a.created).slice(0, Number(n) || 5000); },
   async createTitle(t) { const d = L(); d.titles[t.id] = t; save(d); },
   async titlesByShop(shopId) { return Object.values(L().titles).filter((t) => t.shop === shopId).sort((a, b) => a.created - b.created); },
   async titleById(id) { return L().titles[id]; },
@@ -1421,6 +1423,29 @@ const bulkCard = (shop) => `<h2>📦 상품 일괄 등록 <span class="tag paid"
 <input type="file" id="bkf" accept=".csv,text/csv,text/plain"><textarea name="csv" id="bkt" rows="6" placeholder="제목,가격,설명,잠금정보,재고,공개&#10;예시 상품,5000,설명이에요,,KEY-1|KEY-2,Y" required></textarea>
 <button>일괄 등록</button></form>
 <script>(function(){var f=document.getElementById('bkf'),t=document.getElementById('bkt');if(!f)return;f.onchange=function(){var file=f.files[0];if(!file)return;var r=new FileReader();r.onload=function(){var b=r.result,s;try{s=new TextDecoder('utf-8',{fatal:true}).decode(b)}catch(e){try{s=new TextDecoder('euc-kr').decode(b)}catch(e2){s=new TextDecoder('utf-8').decode(b)}}t.value=s};r.readAsArrayBuffer(file)}})();</script>`;
+
+// ----- 운영자: 구독 수입 (키 판매소 포인트에서 차감된 Plus/Pro 구독 요금) -----
+async function subRevenueHtml() {
+  try {
+    const KST = 9 * 3600e3, now = Date.now(), nk = new Date(now + KST), cur = nk.getUTCFullYear() * 12 + nk.getUTCMonth();
+    const startOf = (k) => Date.UTC(Math.floor(k / 12), k % 12, 1) - KST; // 그 달 1일 0시(한국)
+    const rows = await store.ledgerByKind('sub', startOf(cur - 5), 10000);
+    const months = Array.from({ length: 6 }, (_, i) => ({ k: cur - 5 + i, plus: { n: 0, sum: 0 }, pro: { n: 0, sum: 0 } }));
+    for (const r of rows) {
+      const dt = new Date(Number(r.created) + KST), m = months.find((x) => x.k === dt.getUTCFullYear() * 12 + dt.getUTCMonth());
+      if (!m) continue;
+      const p = r.ref === 'pro' ? m.pro : m.plus; p.n++; p.sum += Math.abs(Number(r.delta) || 0);
+    }
+    let subs = 0; try { subs = (await store.usersWithSub()).length; } catch {}
+    const tot = (m) => m.plus.sum + m.pro.sum, cnt = (m) => m.plus.n + m.pro.n;
+    const thisM = months[5], lastM = months[4], sum6 = months.reduce((a, m) => a + tot(m), 0);
+    const box = (t, m) => `<div class="card" style="margin:0"><span class="sub">${t}</span><br><b style="font-size:20px">${won(tot(m))}</b><br><span class="sub">${cnt(m)}건</span></div>`;
+    const lab = (k) => `${Math.floor(k / 12)}년 ${k % 12 + 1}월`;
+    return `<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:12px">${box('이번 달', thisM)}${box('지난 달', lastM)}<div class="card" style="margin:0"><span class="sub">자동 연장 중</span><br><b style="font-size:20px">${subs}명</b><br><span class="sub">구독자</span></div></div>
+<div class="card"><b>월별 구독 수입 (최근 6개월 · 합계 ${won(sum6)})</b>${months.slice().reverse().map((m) => `<div style="padding:8px 0;border-bottom:1px solid #eee;font-size:14px"><div style="display:flex;justify-content:space-between"><span>${lab(m.k)}</span><b>${won(tot(m))}</b></div><span class="sub">Plus ${m.plus.n}건 ${won(m.plus.sum)} · Pro ${m.pro.n}건 ${won(m.pro.sum)}</span></div>`).join('')}</div>
+<p class="sub">키 판매소 포인트에서 차감된 구독 요금만 집계해요. 키를 사서 등록한 경우는 키 판매소의 판매내역에 따로 잡혀요. (포인트 1P = 1원 기준)</p>`;
+  } catch (e) { console.error('구독 수입 집계 실패', e.message); return '<p class="sub">집계하지 못했어요. 잠시 뒤에 다시 열어 주세요.</p>'; }
+}
 
 // ----- 관리 화면의 라이센스 탭 2개 (매출 통계 · 라이센스 혜택) -----
 async function proTabsHtml(shop, ctx) {
@@ -3189,6 +3214,7 @@ route('GET', /^\/admin$/, async (req, res) => {
   const siteInq = await safeInq(() => store.listInquiries(null));
   for (const r of siteInq) if (!emailMap.has(r.user_id)) { const x = await store.userById(r.user_id); if (x) emailMap.set(x.id, x.email); }
   const emailOf = (id) => emailMap.get(id) || (id ? id.slice(0, 8) : '없음');
+  const subRevHtml = await subRevenueHtml();
   send(res, 200, panelPage({ title: '운영자', heading: '운영자', key: 'admin', chip: { href: '/my', label: STORE_ICO, aria: '내 상점' }, links: [{ href: '/my', label: '내 상점' }] }, `${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
 <!--TAB:reqs::상점 신청 ${reqs.length}건-->
 <h2>상점 추가 신청 ${reqs.length}건</h2>
@@ -3204,10 +3230,13 @@ ${siteInq.map((x) => inqStaffCard(x, emailOf(x.user_id), '/admin/inquiries')).jo
 <form method="get" action="/admin"><input name="sq" placeholder="상점 이름 또는 주인 이메일 검색" value="${esc(sq)}"><input type="hidden" name="q" value="${esc(search)}"><button>검색</button>${sq ? '<p class="sub"><a href="/admin' + (search ? '?q=' + enc(search) : '') + '">검색 지우기</a></p>' : ''}</form>
 ${shops.map((sh) => `<div class="card"><b>${esc(sh.name)}</b>${sh.deleted ? ' 삭제됨' : ''}<br><span class="sub">주인 ${esc(emailOf(sh.owner))}</span><br><a href="/m/${sh.key}">관리하기</a>${sh.deleted ? '' : ` <a href="/s/${sh.id}">보기</a>`}
 ${sh.deleted ? `<form method="post" action="/admin/shops/${sh.id}/restore"><button style="background:#111111">복구</button></form><form method="post" action="/admin/shops/${sh.id}/purge" onsubmit="return confirm('${esc(sh.name).replace(/&#39;/g, '')} 상점을 영구 삭제할까요?\\n아이템·주문·후기·충전·포인트 기록이 모두 지워지고, 구매자도 구매한 내용을 다시 볼 수 없어요. 절대 되돌릴 수 없어요.')"><button style="background:#7f1d1d;margin-top:6px">영구 삭제</button></form>` : `<form method="post" action="/admin/shops/${sh.id}/delete" onsubmit="return confirm('이 상점을 삭제할까요? 사이트에서 사라지고 새 구매·충전이 막혀요. (복구할 수 있어요)')"><button style="background:#dc2626">상점 삭제</button></form>`}</div>`).join('') || `<p class="sub">${sq ? '검색 결과가 없어요' : '상점이 없어요'}</p>`}
-<!--TAB:keys::라이센스 키-->
-<h2>라이센스 키 (자동 충전 전용)</h2>
+<!--TAB:keys::이용권 키-->
+<h2>이용권 키 (Plus·Pro)</h2>
 <form class="card" method="post" action="/admin/licenses"><select name="plan" style="${SEL_STYLE}margin-bottom:8px"><option value="pro">Pro 키 (LK)</option><option value="plus">Plus 키 (LP)</option></select><div class="row"><input name="days" type="number" inputmode="numeric" min="1" max="36500" placeholder="기간 (일)" required><input name="count" type="number" inputmode="numeric" min="1" max="20" value="1" style="max-width:80px;text-align:center"></div><input name="note" placeholder="메모 (선택, 예: 홍길동)" maxlength="40" style="margin-top:8px"><button style="margin-top:8px">키 발급</button><p class="sub">기간은 일 단위, 오른쪽 칸은 발급 개수(최대 20). 영구는 36500일.</p></form>
 ${licenses.map((k) => `<div class="card tcard"><code style="font-size:14px;font-weight:700;user-select:all">${esc(k.key)}</code><br><span class="sub">${String(k.key).startsWith('LP') ? 'Plus' : 'Pro'} ${Number(k.days)}일${k.note ? ' · ' + esc(k.note) : ''} · ${k.used_by ? `사용됨 (회원번호 ${esc(String(k.used_by).slice(0, 8))} · ${fmtDay(k.used_at)})` : '미사용'}</span>${k.used_by ? '' : `<div class="acts"><button type="button" style="padding:10px;font-size:14px;border-radius:14px;background:#f4f4f5;color:#18181b" onclick="navigator.clipboard&&navigator.clipboard.writeText('${esc(k.key)}');this.textContent='복사됨'">복사</button><form method="post" action="/admin/licenses/delete" onsubmit="return confirm('이 키를 삭제할까요?')"><input type="hidden" name="key" value="${esc(k.key)}"><button>삭제</button></form></div>`}</div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
+<!--TAB:subrev::구독 수입-->
+<h2>구독 수입</h2>
+${subRevHtml}
 <!--TAB:users::사용자-->
 <h2>사용자</h2>
 <form method="get" action="/admin" class="row"><input type="hidden" name="sq" value="${esc(sq)}"><input name="q" placeholder="이메일 검색" value="${esc(search)}"><button>검색</button></form>
