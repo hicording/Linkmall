@@ -133,9 +133,14 @@
   .tag { display: inline-block; font-size: .72rem; font-weight: 900; padding: .15rem .6rem; border-radius: 999px; vertical-align: middle; margin-left: .3rem; }
   .tag.free { background: var(--sage); color: var(--green); }
   .tag.paid { background: var(--dark); color: #fff; }
-  .tag.plus { background: #9db58a; color: #1c1b17; }
+  .tag.plus { background: #f6dfb4; color: #6b4210; }
+  .fcard .tag.plus { background: #e9b86a; color: #2a1b06; }
   .fcard .tag.paid { background: #fff; color: #1c1b17; }
   .plan.free { border: 2px solid var(--green); }
+  .plan.plus { border: 2px solid #c9822b; background: #fffaf0; }
+  .plan.plus li { border-top-color: #efdcb8; }
+  .plan.plus li::before { background: #c9822b; }
+  .plan.plus .badge2 { background: #c9822b; color: #fff; }
   .plan-note { margin: -2.4rem 0 3.5rem; color: var(--dim); font-size: .84rem; line-height: 1.65; }
   .plan-note b { color: var(--ink); font-weight: 700; }
   .plan .badge2 { display: inline-block; font-size: .72rem; font-weight: 900; padding: .15rem .65rem; border-radius: 999px; margin-left: .4rem; background: var(--green); color: #fff; vertical-align: middle; }
@@ -371,7 +376,7 @@
         <p>상점을 <b>3개까지 무료</b>로 만들 수 있어요. 기본 기능은 전부 무료예요.</p>
         <ul><li>판매와 재고 자동 지급</li><li>포인트 결제, 수동 충전</li><li>칭호, 문의, 알림</li><li>재입고 알림</li></ul>
       </div>
-      <div class="plan">
+      <div class="plan plus">
         <small>Plus <span class="badge2">가성비</span></small>
         <div class="pp">3,000원 <small>/ 30일</small></div>
         <p>혼자 운영하는 판매자에게 필요한 기능을 담았어요. <b>상점 4개</b>까지 만들 수 있어요.</p>
