@@ -2077,7 +2077,7 @@ route('GET', /^\/my$/, async (req, res) => {
   const planLine = plan === 'lite' ? '무료로 쓰는 중' : [proLeft ? `Pro ${fmtDay(u.license_until)}까지` : '', plusLeft ? `Plus ${fmtDay(u.plus_until)}까지${proLeft ? ' (Pro 뒤에 이어져요)' : ''}` : ''].filter(Boolean).join(' · ');
   const subOn = PLANS[u.sub_plan] ? u.sub_plan : '';
   const subForm = (p) => `<form method="post" action="/my/subscribe" onsubmit="return confirm('${PLAN_NAME[p]} 30일 구독을 시작할까요?\\n키 판매소 포인트 ${PLANS[p].price.toLocaleString('ko-KR')}P가 바로 차감되고, 만료 하루 전에 자동으로 연장돼요.\\n포인트가 모자라면 자동으로 해지돼요.')" style="margin:8px 0 0"><input type="hidden" name="plan" value="${p}"><button${p === 'pro' ? '' : ' style="background:#4b5563"'}>${PLAN_NAME[p]} 구독하기 · ${won(PLANS[p].price)} / 30일</button></form>`;
-  const planCard = admin ? '' : `<details class="card" id="plan" style="position:sticky;top:8px;z-index:5;box-shadow:0 8px 24px rgba(0,0,0,.14)"${q.get('open') || q.get('m') || q.get('e') ? ' open' : ''}>
+  const planCard = admin ? '' : `<details class="card" id="plan" style="order:1;position:sticky;top:72px;z-index:5;box-shadow:0 8px 24px rgba(0,0,0,.14)"${q.get('open') || q.get('m') || q.get('e') ? ' open' : ''}>
 <summary style="cursor:pointer;list-style:none"><b>💎 내 요금제: ${PLAN_NAME[plan]}</b>${subOn ? ' <span class="sub">· 🔁 자동 연장 중</span>' : ''}<br><span class="sub">${esc(planLine)}</span> <b style="float:right">구독하러 가기 ▾</b></summary>
 <div style="margin-top:12px"><p class="sub" style="margin:0 0 4px">키 판매소 포인트 <b>${won(ksBal)}</b>${ks ? ` · <a href="/s/${ks.id}">포인트 충전하러 가기</a>` : ''}</p>
 ${subOn ? `<p class="sub">🔁 <b>${PLAN_NAME[subOn]}</b> 자동 연장 켜짐 — 만료 하루 전에 ${won(PLANS[subOn].price)}가 키 판매소 포인트에서 차감돼요. 포인트가 모자라면 자동으로 해지돼요.</p><form method="post" action="/my/subscribe/off" onsubmit="return confirm('자동 연장을 끌까요? 이미 낸 기간은 끝까지 쓸 수 있어요.')"><button style="background:#6b7280">자동 연장 끄기</button></form><p class="sub" style="margin:10px 0 0">다른 요금제로 바꾸려면 아래에서 새로 구독해요.</p>` : ''}
@@ -2085,17 +2085,14 @@ ${subForm('plus')}${subForm('pro')}
 <p class="sub" style="margin:10px 0 0">구독하면 바로 포인트가 차감되고 30일이 더해져요. 기간이 남아 있으면 그 뒤에 이어져요. Plus는 상점 4개·쿠폰·통계·예약 판매·꾸미기, Pro는 거기에 상점 5개·직원·전용 주소·자동 충전·자동 차단이 더해져요.</p></div></details>`;
   const keyCard = admin ? '' : `<form class="card" method="post" action="/my/license"><b>이용권 키 등록</b><p class="sub">키를 등록하면 Plus 또는 Pro 기간이 늘어나요. 모든 상점에 적용돼요. (LK = Pro · LP = Plus)</p><div class="row"><input name="key" placeholder="LK-XXXX-XXXX-XXXX-XXXX" required maxlength="40" autocapitalize="characters" autocomplete="off"><button>등록</button></div></form>`;
   send(res, 200, page('내 상점', `<h1>내 상점</h1><p class="sub">${esc(u.email)} · <a href="/account">비밀번호 변경</a></p>
-${planCard}${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}
-${noticeBlock(siteN, '운영자 공지')}<div class="card"><a href="/wallet">내 포인트 · 칭호</a> <a href="/inquiry">운영자 문의</a>${admin ? ' <a href="/admin">관리자</a>' : ''}</div>
-${shops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}
-${staffShops.length ? '<h2>직원으로 참여한 상점</h2>' + staffShops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') : ''}
-${atLimit ? `<div class="card"><b>상점은 ${limit}개까지 만들 수 있어요 (현재 ${shops.length}개)</b>${plan === 'pro' ? '' : `<p class="sub">Plus는 4개, Pro는 5개까지 만들 수 있어요.</p>`}${pendingReq ? '<p class="warn">신청이 접수됐어요. 운영자가 승인하면 상점을 만들 수 있어요.</p>' : `<form method="post" action="/my/shop-request"><textarea name="note" placeholder="상점이 더 필요한 이유" required maxlength="300"></textarea><button>상점 추가 신청</button></form>`}</div>` : `<form class="card" method="post" action="/shops"><b>새 상점 만들기</b> <span class="sub">(${shops.length}/${Number.isFinite(limit) ? limit : '제한 없음'})</span><br>
+<style>.home{display:flex;flex-direction:column}.colL,.colR,.full{display:contents}@media(min-width:900px){.w{max-width:1000px;padding-top:26px}.home{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:0 28px;align-items:start}.colL,.colR{display:block}.colL{grid-column:1}.colR{grid-column:2}.full{display:block;grid-column:1/-1;max-width:520px}.full button{margin-top:6px}}</style><div class="home"><div class="colL">${planCard}<div style="order:2">${q.get('m') ? `<p class="card">${esc(q.get('m'))}</p>` : ''}${q.get('e') ? `<p class="warn">${esc(q.get('e'))}</p>` : ''}</div><div style="order:3">${noticeBlock(siteN, '운영자 공지')}</div><div style="order:4"><div class="card"><a href="/wallet">내 포인트 · 칭호</a> <a href="/inquiry">운영자 문의</a>${admin ? ' <a href="/admin">관리자</a>' : ''}</div></div><div style="order:8">${PUSH_CARD}</div></div>
+<div class="colR"><div style="order:5">${shops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') || '<p class="sub"><i class="empty">비어 있어요</i></p>'}</div>
+<div style="order:6">${staffShops.length ? '<h2>직원으로 참여한 상점</h2>' + staffShops.map((x) => `<div class="card"><b>${esc(x.name)}</b><br><a href="/m/${x.key}">관리하기</a> <a href="/s/${x.id}">상점 보기</a></div>`).join('') : ''}</div>
+<div style="order:7">${atLimit ? `<div class="card"><b>상점은 ${limit}개까지 만들 수 있어요 (현재 ${shops.length}개)</b>${plan === 'pro' ? '' : `<p class="sub">Plus는 4개, Pro는 5개까지 만들 수 있어요.</p>`}${pendingReq ? '<p class="warn">신청이 접수됐어요. 운영자가 승인하면 상점을 만들 수 있어요.</p>' : `<form method="post" action="/my/shop-request"><textarea name="note" placeholder="상점이 더 필요한 이유" required maxlength="300"></textarea><button>상점 추가 신청</button></form>`}</div>` : `<form class="card" method="post" action="/shops"><b>새 상점 만들기</b> <span class="sub">(${shops.length}/${Number.isFinite(limit) ? limit : '제한 없음'})</span><br>
 <input name="name" placeholder="상점 이름" required maxlength="40">
 <input name="webhook" placeholder="디스코드 웹훅 URL (선택, 판매 알림용)">
-<button>상점 만들기</button></form>`}
-${PUSH_CARD}
-<form method="post" action="/logout"><button style="background:#6b7280">로그아웃</button></form>
-${keyCard}`));
+<button>상점 만들기</button></form>`}</div></div>
+<div class="full"><form method="post" action="/logout" style="order:9"><button style="background:#6b7280">로그아웃</button></form><div style="order:10">${keyCard}</div></div></div>`));
 });
 
 route('POST', /^\/my\/subscribe$/, async (req, res) => {
